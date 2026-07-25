@@ -1,0 +1,13 @@
+# Changelog
+
+## 1.0.0
+
+- Rebuilt the application with a Flutter UI, Rust parsing/export core, and Kotlin Android platform layer.
+- Added Standard, Shizuku, Root, and root-safe Auto access modes.
+- Added rootless GPU renderer detection through EGL.
+- Added privileged GPU frequency/load, game-process CPU/RAM, CPU frequency, and SoC thermal probing through Shizuku or root.
+- Added interval-based SurfaceFlinger FPS, P90, and P99 parsing.
+- Added a movable foreground overlay.
+- Added native background session recording that continues while a game is foregrounded.
+- Added PNG and full-session CSV export through Android's system file picker.
+- Added a completely new dashboard and application icon.

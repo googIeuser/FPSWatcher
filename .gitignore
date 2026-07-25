@@ -1,0 +1,15 @@
+.dart_tool/
+.packages
+.pub/
+build/
+/android/
+android/.gradle/
+android/local.properties
+android/app/debug/
+android/app/profile/
+android/app/release/
+rust/target/
+*.jks
+*.keystore
+.env
+.DS_Store
