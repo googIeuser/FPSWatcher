@@ -9,4 +9,6 @@ The source tree was validated in the generation environment with:
 - Direct Kotlin compilation of the EGL GPU probe against API-shaped stubs.
 - Shell syntax validation of the generated privileged telemetry command.
 
-A complete Flutter/Android/Rust APK build was not run in the generation environment because Flutter, the Android SDK, and the Rust toolchain were not installed there. The included GitHub Actions workflow performs the complete build, analysis, tests, Rust Android compilation, and APK artifact upload.
+The first two GitHub Actions validation runs reached the Android build stage. Rust tests, Rust Android libraries, Flutter analysis, and Flutter tests passed. Version 1.0.2 additionally migrates the generated Android app module to AGP 9 built-in Kotlin and the typed JVM 17 compiler options DSL after the previous run stopped on deprecated legacy Gradle APIs.
+
+A complete APK build cannot be rerun in this generation environment because Flutter and the Android SDK are not installed here. The included GitHub Actions workflow performs the final APK build and artifact upload.

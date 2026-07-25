@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2
+
+- Migrated the Android application module to AGP 9 built-in Kotlin.
+- Removed the legacy `kotlin-android` plugin from the app module.
+- Replaced the deprecated `android.kotlinOptions` block with the typed `kotlin.compilerOptions` DSL targeting JVM 17.
+- Keeps the project on the current AGP DSL instead of relying on temporary legacy opt-out flags.
+
 ## 1.0.1
 
 - Removed two redundant `dart:typed_data` imports that caused `flutter analyze` to exit with code 1 in GitHub Actions.
