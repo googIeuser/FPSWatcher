@@ -36,6 +36,9 @@ class TelemetrySample {
     this.batteryLevel,
     this.batteryTemperatureC,
     this.batteryPowerW,
+    this.batteryCharging,
+    this.batteryCurrentMa,
+    this.batteryVoltageV,
     this.thermalStatus,
     this.refreshRateHz,
     this.rxKbps,
@@ -44,6 +47,7 @@ class TelemetrySample {
     this.storageTotalGb,
     this.surfaceFlingerRaw,
     this.gpuRaw,
+    this.collectorWarnings = const <String>[],
   });
 
   final DateTime timestamp;
@@ -68,6 +72,9 @@ class TelemetrySample {
   final double? batteryLevel;
   final double? batteryTemperatureC;
   final double? batteryPowerW;
+  final bool? batteryCharging;
+  final double? batteryCurrentMa;
+  final double? batteryVoltageV;
   final int? thermalStatus;
   final double? refreshRateHz;
   final double? rxKbps;
@@ -76,6 +83,7 @@ class TelemetrySample {
   final double? storageTotalGb;
   final String? surfaceFlingerRaw;
   final String? gpuRaw;
+  final List<String> collectorWarnings;
 
   static double? _d(dynamic value) => value is num ? value.toDouble() : double.tryParse('$value');
   static int? _i(dynamic value) => value is num ? value.toInt() : int.tryParse('$value');
@@ -108,6 +116,9 @@ class TelemetrySample {
       batteryLevel: _d(source['batteryLevel']),
       batteryTemperatureC: _d(source['batteryTemperatureC']),
       batteryPowerW: _d(source['batteryPowerW']),
+      batteryCharging: source['batteryCharging'] as bool?,
+      batteryCurrentMa: _d(source['batteryCurrentMa']),
+      batteryVoltageV: _d(source['batteryVoltageV']),
       thermalStatus: _i(source['thermalStatus']),
       refreshRateHz: _d(source['refreshRateHz']),
       rxKbps: _d(source['rxKbps']),
@@ -116,6 +127,9 @@ class TelemetrySample {
       storageTotalGb: _d(source['storageTotalGb']),
       surfaceFlingerRaw: source['surfaceFlingerRaw'] as String?,
       gpuRaw: source['gpuRaw'] as String?,
+      collectorWarnings: (source['collectorWarnings'] as List<dynamic>? ?? const <dynamic>[])
+          .map((value) => '$value')
+          .toList(growable: false),
     );
   }
 
@@ -145,6 +159,9 @@ class TelemetrySample {
       batteryLevel: batteryLevel,
       batteryTemperatureC: batteryTemperatureC,
       batteryPowerW: batteryPowerW,
+      batteryCharging: batteryCharging,
+      batteryCurrentMa: batteryCurrentMa,
+      batteryVoltageV: batteryVoltageV,
       thermalStatus: thermalStatus,
       refreshRateHz: refreshRateHz,
       rxKbps: rxKbps,
@@ -153,6 +170,7 @@ class TelemetrySample {
       storageTotalGb: storageTotalGb,
       surfaceFlingerRaw: surfaceFlingerRaw,
       gpuRaw: gpuRaw,
+      collectorWarnings: collectorWarnings,
     );
   }
 
@@ -179,6 +197,9 @@ class TelemetrySample {
         'batteryLevel': batteryLevel,
         'batteryTemperatureC': batteryTemperatureC,
         'batteryPowerW': batteryPowerW,
+        'batteryCharging': batteryCharging,
+        'batteryCurrentMa': batteryCurrentMa,
+        'batteryVoltageV': batteryVoltageV,
         'thermalStatus': thermalStatus,
         'refreshRateHz': refreshRateHz,
         'rxKbps': rxKbps,

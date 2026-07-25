@@ -1,4 +1,4 @@
-# FPSWatcher Next
+# FPSWatcher Next v1.0.5
 
 FPSWatcher Next is a rootless-first Android performance monitor rebuilt with a Flutter interface, a Rust parsing/export core, and an Android Kotlin platform layer.
 
@@ -7,9 +7,9 @@ FPSWatcher Next is a rootless-first Android performance monitor rebuilt with a F
 - **Standard:** no root and no Shizuku. Shows CPU usage/frequency when readable, RAM, battery, thermal status, refresh rate, network throughput, storage, foreground package with Usage Access, and GPU renderer through EGL.
 - **Shizuku:** runs a small UserService as Android shell/root identity. Adds SurfaceFlinger FPS statistics and attempts GPU frequency/load reads without requiring root.
 - **Root:** uses `su -c` as the final privileged fallback.
-- **Auto:** prefers Shizuku, then Standard mode.
+- **Auto:** verifies Shizuku first, then root, then falls back to Standard mode.
 
-Android vendors expose different sysfs nodes and restrict them differently. GPU load/frequency therefore remains device-dependent even with Shizuku. GPU model detection does not need root.
+Android vendors expose different sysfs nodes and restrict them differently. GPU load/frequency therefore remains device-dependent even with Shizuku. GPU model detection does not need root. GPU load and frequency are discovered from universal sysfs/devfreq candidates and may still be blocked by the vendor kernel.
 
 ## Main features
 
@@ -52,3 +52,13 @@ Pushing the repository triggers `.github/workflows/android.yml`. The workflow ge
 ## Legacy APK inspection
 
 The supplied v0.3.0 APK was a small Java-only application using `UsageStatsManager`, a native overlay service, `/proc/stat`, CPU sysfs nodes, battery APIs, and root shell commands. It did not contain Flutter, Rust, Shizuku UserService integration, or session export support. See `docs/legacy_apk_report.md`.
+
+## Runtime reliability fixes in 1.0.5
+
+- Android 17-safe display lookup through `DisplayManager`.
+- Per-metric error isolation: unsupported sensors no longer blank the complete dashboard.
+- Operational Shizuku UserService and `su -c` checks instead of permission-only green indicators.
+- Automatic Shizuku → root → Standard fallback.
+- Universal Qualcomm/Adreno, Mali, PowerVR and MediaTek GPU path scanning.
+- Foreground-game detection through Usage Access with privileged fallbacks.
+- Charging-aware battery power display and extended CSV fields.

@@ -119,7 +119,10 @@ class OverlayService : Service() {
                         val snapshot = runCatching { collector.collect(mode) }.getOrNull()
                         if (snapshot != null) NativeSessionStore.add(snapshot)
                         handler.post {
-                            if (snapshot != null && overlayView != null) updateText(snapshot)
+                            if (snapshot != null && overlayView != null) {
+                                updateOverlayVisibility(snapshot)
+                                updateText(snapshot)
+                            }
                             updating.set(false)
                         }
                     }
@@ -127,6 +130,14 @@ class OverlayService : Service() {
                 handler.postDelayed(this, 1000L)
             }
         }, 250L)
+    }
+
+    private fun updateOverlayVisibility(data: Map<String, Any?>) {
+        val foreground = data["foregroundPackage"] as? String
+        val shouldHide = foreground == packageName ||
+            foreground == "com.android.settings" ||
+            foreground?.startsWith("com.android.permissioncontroller") == true
+        overlayView?.visibility = if (shouldHide) View.GONE else View.VISIBLE
     }
 
     private fun updateText(data: Map<String, Any?>) {

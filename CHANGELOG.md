@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.5
+
+- Fixed Android 17 display collection by resolving the default display through `DisplayManager` instead of reading `Context.display` from an application context.
+- Isolated every metric so a single vendor/API failure no longer stops the full telemetry snapshot.
+- Added operational Shizuku UserService checks and automatic Shizuku → root → standard fallback.
+- Added SukiSU/KernelSU-compatible `su -c` probing and truthful root status reporting.
+- Added Usage Access, Shizuku and root foreground-app fallbacks.
+- Expanded universal Adreno, Mali, PowerVR and MediaTek GPU node discovery.
+- Fixed dashboard card overflows and removed raw platform exceptions from the main UI.
+- Added charging/current/voltage fields to live telemetry and CSV exports.
+- Hides the floating overlay over FPSWatcher and Android permission/settings screens.
+
 ## 1.0.4
 
 - Enabled Android `BuildConfig` generation in the app module so `ShizukuClient` can read `BuildConfig.DEBUG` under AGP 9.

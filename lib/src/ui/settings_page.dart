@@ -73,10 +73,14 @@ class SettingsPage extends StatelessWidget {
         _PermissionTile(
           icon: Icons.admin_panel_settings_outlined,
           title: 'Shizuku',
-          subtitle: controller.shizukuAvailable
-              ? 'Service UID ${controller.shizukuUid}. Grants shell/root identity through UserService.'
-              : 'Shizuku is not running or not installed.',
-          granted: controller.shizukuPermission,
+          subtitle: controller.shizukuOperational
+              ? 'UserService connected · UID ${controller.shizukuUid}.'
+              : controller.shizukuPermission
+                  ? 'Permission granted, but UserService is not responding. Tap to reconnect.'
+                  : controller.shizukuAvailable
+                      ? 'Shizuku is running. Permission is required.'
+                      : 'Shizuku is not running or not installed.',
+          granted: controller.shizukuOperational,
           action: controller.requestShizukuPermission,
         ),
         const SizedBox(height: 16),
@@ -89,7 +93,9 @@ class SettingsPage extends StatelessWidget {
                 Text('Runtime', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 12),
                 _InfoRow(label: 'Rust core', value: controller.rustCore.available ? 'Loaded' : 'Fallback mode'),
-                _InfoRow(label: 'Root binary', value: controller.rootAvailable ? 'Available' : 'Not detected'),
+                _InfoRow(label: 'Root binary', value: controller.rootInstalled ? 'Detected' : 'Not detected'),
+                _InfoRow(label: 'Root command', value: controller.rootAvailable ? 'Operational' : 'Unavailable / denied'),
+                _InfoRow(label: 'Shizuku service', value: controller.shizukuOperational ? 'Operational' : 'Unavailable'),
                 _InfoRow(label: 'Monitor service', value: controller.monitorServiceRunning ? 'Running' : 'Stopped'),
                 _InfoRow(label: 'Overlay', value: controller.overlayRunning ? 'Visible' : 'Hidden'),
                 _InfoRow(label: 'Recorder', value: controller.recorder.isRecording ? 'Recording' : 'Idle'),
@@ -122,7 +128,7 @@ class SettingsPage extends StatelessWidget {
   }
 
   String _description(AccessMode mode) => switch (mode) {
-        AccessMode.auto => 'Prefer Shizuku, then Standard mode. Root is opt-in.',
+        AccessMode.auto => 'Prefer Shizuku, then Root, then Standard mode.',
         AccessMode.standard => 'No privileged access. Maximum safe Android API coverage.',
         AccessMode.shizuku => 'Use Android shell/root identity through Shizuku UserService.',
         AccessMode.root => 'Use su directly for the widest sysfs access.',

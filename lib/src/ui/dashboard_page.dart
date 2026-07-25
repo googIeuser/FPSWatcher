@@ -122,7 +122,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 physics: const NeverScrollableScrollPhysics(),
                 crossAxisSpacing: 10,
                 mainAxisSpacing: 10,
-                childAspectRatio: width >= 760 ? 1.25 : 1.04,
+                childAspectRatio: width >= 760 ? 1.25 : 0.92,
                 children: [
                   MetricCard(
                     title: 'CPU',
@@ -133,10 +133,14 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                   MetricCard(
                     title: 'GPU',
-                    value: sample?.gpuLoad == null ? 'Detected' : '${_number(sample?.gpuLoad)}%',
+                    value: sample?.gpuLoad == null
+                        ? (sample?.gpuModel ?? 'Unavailable')
+                        : '${_number(sample?.gpuLoad)}%',
                     subtitle: sample?.gpuFrequencyMhz == null
-                        ? (sample?.gpuModel ?? 'Renderer unavailable')
-                        : '${_number(sample?.gpuFrequencyMhz)} MHz · ${sample?.gpuModel ?? ''}',
+                        ? (sample?.gpuModel == null
+                            ? 'No readable GPU telemetry node'
+                            : 'Model detected · load unavailable')
+                        : '${_number(sample?.gpuFrequencyMhz)} MHz · ${sample?.gpuModel ?? 'GPU'}',
                     icon: Icons.developer_board_outlined,
                     progress: sample?.gpuLoad == null ? null : sample!.gpuLoad! / 100,
                   ),
@@ -160,8 +164,10 @@ class _DashboardPageState extends State<DashboardPage> {
                   MetricCard(
                     title: 'Battery',
                     value: '${_number(sample?.batteryLevel)}%',
-                    subtitle: '${_number(sample?.batteryTemperatureC, decimals: 1)}°C · '
-                        '${_number(sample?.batteryPowerW, decimals: 2)} W',
+                    subtitle: sample?.batteryCharging == true
+                        ? '${_number(sample?.batteryTemperatureC, decimals: 1)}°C · Charging'
+                        : '${_number(sample?.batteryTemperatureC, decimals: 1)}°C · '
+                            '${_number(sample?.batteryPowerW, decimals: 2)} W',
                     icon: Icons.battery_charging_full,
                     progress: sample?.batteryLevel == null ? null : sample!.batteryLevel! / 100,
                   ),
@@ -196,15 +202,6 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                 ],
               ),
-              if (controller.lastError != null) ...[
-                const SizedBox(height: 14),
-                Text(
-                  controller.lastError!,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                ),
-              ],
             ],
           ),
         ),
@@ -310,7 +307,7 @@ class _StatusStrip extends StatelessWidget {
         _StatusChip(label: 'Usage', active: controller.usageAccess),
         _StatusChip(label: 'Overlay', active: controller.overlayRunning),
         _StatusChip(label: 'Recording', active: controller.recorder.isRecording),
-        _StatusChip(label: 'Shizuku', active: controller.shizukuPermission),
+        _StatusChip(label: 'Shizuku', active: controller.shizukuOperational),
         _StatusChip(label: 'Root', active: controller.rootAvailable),
       ],
     );

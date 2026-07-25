@@ -31,6 +31,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool notificationPermission = false;
   bool shizukuAvailable = false;
   bool shizukuPermission = false;
+  bool shizukuOperational = false;
+  bool rootInstalled = false;
   bool rootAvailable = false;
   int shizukuUid = -1;
   int pageIndex = 0;
@@ -71,6 +73,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       notificationPermission = status['notificationPermission'] == true;
       shizukuAvailable = status['shizukuAvailable'] == true;
       shizukuPermission = status['shizukuPermission'] == true;
+      shizukuOperational = status['shizukuOperational'] == true;
+      rootInstalled = status['rootInstalled'] == true;
       rootAvailable = status['rootAvailable'] == true;
       shizukuUid = (status['shizukuUid'] as num?)?.toInt() ?? -1;
       overlayRunning = status['overlayRunning'] == true;
@@ -82,7 +86,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       lastError = null;
       notifyListeners();
     } catch (error) {
-      lastError = '$error';
+      lastError = 'Status could not be refreshed. Tap refresh to retry.';
       notifyListeners();
     }
   }
@@ -112,7 +116,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       lastError = null;
       notifyListeners();
     } catch (error) {
-      lastError = '$error';
+      lastError = 'Telemetry collection was interrupted. Retrying automatically.';
       notifyListeners();
     } finally {
       _collecting = false;
