@@ -22,7 +22,7 @@ object ShizukuClient {
     private val serviceLock = Object()
     private lateinit var applicationContext: Context
 
-    private val userServiceArgs by lazy {
+    private val userServiceArgs: Shizuku.UserServiceArgs by lazy {
         Shizuku.UserServiceArgs(
             ComponentName(applicationContext, PrivilegedService::class.java),
         )
@@ -119,7 +119,8 @@ object ShizukuClient {
     }
 
     private fun awaitService(timeoutMs: Long = BIND_TIMEOUT_MS): IPrivilegedService? {
-        service?.let { return it }
+        val connected = service
+        if (connected != null) return connected
         bindIfPossible()
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
         synchronized(serviceLock) {

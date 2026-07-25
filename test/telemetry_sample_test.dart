@@ -9,12 +9,22 @@ void main() {
       'surfaceFlingerRaw': 'averageFPS = 60',
     });
     final merged = sample.mergeParsed(
-      fpsData: {'averageFps': 59.8, 'p99Fps': 42.0},
-      gpuData: {'loadPercent': 72.0, 'frequencyMhz': 900.0},
+      fpsData: {
+        'averageFps': 59.8,
+        'onePercentLowFps': 42.0,
+        'pointOnePercentLowFps': 31.0,
+      },
+      gpuData: {
+        'loadPercent': 72.0,
+        'frequencyMhz': 900.0,
+        'maxFrequencyMhz': 1100.0,
+      },
     );
     expect(merged.fps, 59.8);
-    expect(merged.p99Fps, 42.0);
+    expect(merged.onePercentLowFps, 42.0);
+    expect(merged.pointOnePercentLowFps, 31.0);
     expect(merged.gpuLoad, 72.0);
     expect(merged.gpuFrequencyMhz, 900.0);
+    expect(merged.gpuFrequencyMaxMhz, 1100.0);
   });
 }

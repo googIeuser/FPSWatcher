@@ -24,6 +24,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _timer;
   bool _collecting = false;
   bool _syncingRecording = false;
+  DateTime? _lastRecordingSync;
   bool overlayRunning = false;
   bool monitorServiceRunning = false;
   bool usageAccess = false;
@@ -37,6 +38,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   int shizukuUid = -1;
   int pageIndex = 0;
   String? lastError;
+  int refreshIntervalMs = 250;
 
   Future<void> initialize() async {
     WidgetsBinding.instance.addObserver(this);
@@ -50,7 +52,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _startTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => collectNow());
+    _timer = Timer.periodic(Duration(milliseconds: refreshIntervalMs), (_) => collectNow());
   }
 
   @override
@@ -109,9 +111,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       sample = sample.mergeParsed(fpsData: fpsParsed, gpuData: gpuParsed);
       latest = sample;
       history.add(sample);
-      if (history.length > 120) history.removeAt(0);
+      if (history.length > 480) history.removeAt(0);
       if (recorder.isRecording) {
-        await _syncRecordedSamples(limit: 30, notify: false);
+        final now = DateTime.now();
+        if (_lastRecordingSync == null ||
+            now.difference(_lastRecordingSync!).inMilliseconds >= 2000) {
+          _lastRecordingSync = now;
+          await _syncRecordedSamples(limit: 60, notify: false);
+        }
       }
       lastError = null;
       notifyListeners();
@@ -127,6 +134,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     accessMode = mode;
     notifyListeners();
     unawaited(collectNow());
+  }
+
+  void setRefreshInterval(int milliseconds) {
+    refreshIntervalMs = milliseconds.clamp(250, 1000).toInt();
+    _startTimer();
+    notifyListeners();
   }
 
   void setPage(int index) {

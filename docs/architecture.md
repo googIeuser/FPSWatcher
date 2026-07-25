@@ -4,46 +4,49 @@
 
 ### Flutter UI (`lib/`)
 
-- Material 3 dashboard, session recorder, access settings, and export controls.
-- One-second live refresh only while the Flutter activity is resumed.
-- Android MethodChannel bridge for telemetry, permissions, overlay control, native recording, and Storage Access Framework exports.
+- Material 3 dashboard, session recorder, access settings and export controls.
+- 250 ms live refresh by default, selectable as 250/500/1000 ms.
+- Android MethodChannel bridge for telemetry, permissions, overlay control, native recording and Storage Access Framework exports.
 - Rust FFI loader with Dart fallbacks when the native library is unavailable.
 
 ### Rust core (`rust/`)
 
-- SurfaceFlinger timestats parser.
+- SurfaceFlinger timestats and gfxinfo frame parser.
+- 1% low, 0.1% low, average/P95/P99 frame-time calculations.
 - GPU frequency/load parser for common vendor output formats.
-- CSV generator with proper cell escaping.
-- Built as `libfpswatcher_core.so` for arm64-v8a, armeabi-v7a, and x86_64.
+- Detailed CSV generator with proper cell escaping.
+- Built as `libfpswatcher_core.so` for arm64-v8a, armeabi-v7a and x86_64.
 
 ### Kotlin Android layer (`platform/android_overlay/`)
 
-- Standard Android telemetry collector.
+- Standard Android telemetry collector with per-metric failure isolation.
 - EGL GPU renderer probe.
 - Shizuku UserService and AIDL command bridge.
-- Explicit root shell fallback.
-- Foreground monitor service, draggable overlay, and native session store.
-- Android Storage Access Framework writer for PNG and CSV.
+- SukiSU/KernelSU/Magisk-compatible root shell fallback.
+- Foreground monitor service, 250 ms draggable overlay and two-samples-per-second native session store.
+- Lightweight counters are collected every UI tick; privileged FPS/process/GPU probes are cached for 250 ms to limit overhead.
 
 ## Recording flow
 
 1. Flutter requests `startRecording` with the selected access mode.
-2. The Kotlin foreground service starts and collects one sample per second.
-3. Each sample is mirrored to a private JSON-lines recovery file while the bounded in-memory window is updated.
-4. The Flutter activity stops its own timer when it moves to the background, avoiding duplicate heavy telemetry queries while a game is foregrounded.
-5. Native samples remain available when the user returns to the app.
-6. CSV export requests the complete native session and passes it to the Rust CSV generator.
+2. The Kotlin foreground service starts and refreshes the overlay every 250 ms.
+3. A detailed recording sample is stored every 500 ms.
+4. Each sample is mirrored to a private JSON-lines recovery file while the bounded in-memory window is updated.
+5. The Flutter activity stops its own timer while backgrounded, avoiding duplicate telemetry queries during gameplay.
+6. CSV export requests the native session and passes it to the Rust CSV generator.
 
 ## Access behavior
 
 | Metric | Standard | Shizuku | Root |
 |---|---:|---:|---:|
 | GPU renderer/model through EGL | Yes | Yes | Yes |
-| GPU frequency/load | Best effort readable nodes | Enhanced best effort | Widest best effort |
-| Game FPS/P90/P99 | No privileged game-layer source | SurfaceFlinger best effort | SurfaceFlinger best effort |
-| Foreground package | Usage Access | Usage Access | Usage Access |
-| Game process CPU/RAM | Usually restricted | `/proc` plus dumpsys fallback | `/proc` plus dumpsys fallback |
+| GPU frequency/load | Only public readable nodes | Shell-readable KGSL/devfreq/vendor nodes | Widest sysfs/debugfs coverage |
+| Game FPS, 1% low, 0.1% low | No cross-app frame source | SurfaceFlinger with gfxinfo fallback | SurfaceFlinger with gfxinfo fallback |
+| Average/P95/P99 frame time | No cross-app frame source | Yes when a frame source is available | Yes when a frame source is available |
+| Foreground package | Usage Access | Usage Access plus dumpsys fallback | Usage Access plus dumpsys fallback |
+| Game process CPU/PSS/RSS | Usually restricted | `/proc` and dumpsys | `/proc` and dumpsys |
 | System CPU/RAM/battery/network/storage | Yes where Android exposes it | Yes | Yes |
-| SoC thermal sensors | Android thermal status | Thermal sysfs best effort | Thermal sysfs best effort |
+| Instant battery-side watts | Android current × voltage | API plus readable power-supply sysfs | API plus protected power-supply sysfs |
+| SoC thermal sensors | Android thermal status | Readable thermal sysfs | Widest thermal sysfs coverage |
 
-No Android API guarantees third-party access to every GPU or SurfaceFlinger counter. The app reports unavailable values as missing rather than inventing estimates.
+GPU utilization and clock paths are vendor kernel interfaces rather than public standardized Android APIs. Missing protected values remain unavailable instead of being estimated or fabricated.

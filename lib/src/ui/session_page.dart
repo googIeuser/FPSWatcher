@@ -10,8 +10,14 @@ class SessionPage extends StatelessWidget {
     final samples = controller.recorder.samples;
     final fps = samples.map((sample) => sample.fps).whereType<double>().toList();
     final average = fps.isEmpty ? null : fps.reduce((a, b) => a + b) / fps.length;
-    final minimum = fps.isEmpty ? null : fps.reduce((a, b) => a < b ? a : b);
-    final maximum = fps.isEmpty ? null : fps.reduce((a, b) => a > b ? a : b);
+    final lowValues = samples.map((sample) => sample.onePercentLowFps).whereType<double>().toList();
+    final averageLow = lowValues.isEmpty
+        ? null
+        : lowValues.reduce((a, b) => a + b) / lowValues.length;
+    final powerValues = samples.map((sample) => sample.batteryPowerW).whereType<double>().toList();
+    final peakPower = powerValues.isEmpty
+        ? null
+        : powerValues.reduce((a, b) => a > b ? a : b);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
@@ -22,7 +28,7 @@ class SessionPage extends StatelessWidget {
             )),
         const SizedBox(height: 6),
         Text(
-          'Record one native telemetry sample per second in the foreground service, then export the complete session as CSV.',
+          'Record two detailed native telemetry samples per second, including FPS lows, frame time, game CPU/RAM, GPU, clocks, power and temperatures, then export everything as CSV.',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white54),
         ),
         const SizedBox(height: 18),
@@ -72,11 +78,11 @@ class SessionPage extends StatelessWidget {
         const SizedBox(height: 12),
         Row(
           children: [
-            Expanded(child: _Stat(label: controller.recorder.isRecording ? 'Recent avg' : 'Average', value: average)),
+            Expanded(child: _Stat(label: 'Average FPS', value: average)),
             const SizedBox(width: 10),
-            Expanded(child: _Stat(label: controller.recorder.isRecording ? 'Recent min' : 'Minimum', value: minimum)),
+            Expanded(child: _Stat(label: '1% low', value: averageLow)),
             const SizedBox(width: 10),
-            Expanded(child: _Stat(label: controller.recorder.isRecording ? 'Recent max' : 'Maximum', value: maximum)),
+            Expanded(child: _Stat(label: 'Peak watts', value: peakPower, suffix: ' W')),
           ],
         ),
         const SizedBox(height: 12),
@@ -122,9 +128,10 @@ class SessionPage extends StatelessWidget {
                       ),
                       title: Text(sample.foregroundPackage ?? 'Unknown package'),
                       subtitle: Text(
-                        'CPU ${sample.cpuUsage?.toStringAsFixed(0) ?? '—'}% · '
+                        '1% ${sample.onePercentLowFps?.toStringAsFixed(0) ?? '—'} · '
+                        'APP CPU ${sample.appCpuUsage?.toStringAsFixed(0) ?? '—'}% · '
                         'GPU ${sample.gpuLoad?.toStringAsFixed(0) ?? '—'}% · '
-                        'App ${sample.appRamMb?.toStringAsFixed(0) ?? '—'} MB · '
+                        '${sample.batteryPowerW?.toStringAsFixed(2) ?? '—'} W · '
                         '${sample.batteryTemperatureC?.toStringAsFixed(1) ?? '—'}°C',
                       ),
                       trailing: Text(
@@ -142,9 +149,10 @@ class SessionPage extends StatelessWidget {
 }
 
 class _Stat extends StatelessWidget {
-  const _Stat({required this.label, required this.value});
+  const _Stat({required this.label, required this.value, this.suffix = ''});
   final String label;
   final double? value;
+  final String suffix;
 
   @override
   Widget build(BuildContext context) {
@@ -153,7 +161,7 @@ class _Stat extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 16),
         child: Column(
           children: [
-            Text(value?.toStringAsFixed(1) ?? '—', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+            Text(value == null ? '—' : '${value!.toStringAsFixed(1)}$suffix', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
             const SizedBox(height: 4),
             Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white54)),
           ],

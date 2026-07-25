@@ -35,6 +35,7 @@ class OverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val updating = AtomicBoolean(false)
     private var mode = "auto"
+    private var lastRecordedMs = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -73,7 +74,7 @@ class OverlayService : Service() {
         if (overlayView != null || !Settings.canDrawOverlays(this)) return
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val view = TextView(this).apply {
-            text = "FPS —\nCPU —  GPU —"
+            text = "FPS —  1% —  0.1% —\nFRAME — ms\nCPU —  APP —\nGPU —  PWR — W"
             setTextColor(Color.WHITE)
             textSize = 13f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
@@ -117,7 +118,13 @@ class OverlayService : Service() {
                 if (updating.compareAndSet(false, true)) {
                     executor.execute {
                         val snapshot = runCatching { collector.collect(mode) }.getOrNull()
-                        if (snapshot != null) NativeSessionStore.add(snapshot)
+                        if (snapshot != null && NativeSessionStore.isRecording) {
+                            val now = System.currentTimeMillis()
+                            if (now - lastRecordedMs >= 500L) {
+                                NativeSessionStore.add(snapshot)
+                                lastRecordedMs = now
+                            }
+                        }
                         handler.post {
                             if (snapshot != null && overlayView != null) {
                                 updateOverlayVisibility(snapshot)
@@ -127,9 +134,9 @@ class OverlayService : Service() {
                         }
                     }
                 }
-                handler.postDelayed(this, 1000L)
+                handler.postDelayed(this, 250L)
             }
-        }, 250L)
+        }, 100L)
     }
 
     private fun updateOverlayVisibility(data: Map<String, Any?>) {
@@ -141,13 +148,26 @@ class OverlayService : Service() {
     }
 
     private fun updateText(data: Map<String, Any?>) {
-        val fps = number(data["fps"])
+        val fps = decimal(data["fps"])
+        val low1 = decimal(data["onePercentLowFps"])
+        val low01 = decimal(data["pointOnePercentLowFps"])
+        val frame = decimal2(data["frameTimeMs"])
         val cpu = number(data["cpuUsage"])
+        val appCpu = decimal(data["appCpuUsage"])
+        val appRam = number(data["appRamMb"])
+        val cpuFreq = number(data["cpuFrequencyMhz"])
         val gpuLoad = number(data["gpuLoad"])
+        val gpuFreq = number(data["gpuFrequencyMhz"])
+        val power = decimal2(data["batteryPowerW"])
         val temp = decimal(data["batteryTemperatureC"])
-        val battery = number(data["batteryLevel"])
         val access = (data["accessModeUsed"] as? String)?.uppercase(Locale.US) ?: "STANDARD"
-        overlayView?.text = "FPS $fps   $access\nCPU $cpu%  GPU $gpuLoad%\nBAT $battery%  $temp°C"
+        overlayView?.text = buildString {
+            append("FPS $fps  1% $low1  0.1% $low01  $access")
+            append("\nFRAME $frame ms")
+            append("\nCPU $cpu%  $cpuFreq MHz  APP $appCpu%")
+            append("\nGPU $gpuLoad%  $gpuFreq MHz  RAM $appRam MB")
+            append("\nPWR $power W  BAT $temp°C")
+        }
     }
 
     private fun number(value: Any?): String =
@@ -155,6 +175,9 @@ class OverlayService : Service() {
 
     private fun decimal(value: Any?): String =
         (value as? Number)?.toDouble()?.let { String.format(Locale.US, "%.1f", it) } ?: "—"
+
+    private fun decimal2(value: Any?): String =
+        (value as? Number)?.toDouble()?.let { String.format(Locale.US, "%.2f", it) } ?: "—"
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

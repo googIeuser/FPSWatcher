@@ -17,7 +17,7 @@ class SettingsPage extends StatelessWidget {
             )),
         const SizedBox(height: 6),
         Text(
-          'Standard mode stays rootless. Shizuku is the recommended path for privileged FPS and GPU counters.',
+          'Standard mode collects every public Android counter it can read. Shizuku adds real game FPS, process CPU/RAM and any GPU nodes permitted to the shell user; Root unlocks the widest sysfs coverage.',
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white54),
         ),
         const SizedBox(height: 18),
@@ -44,6 +44,36 @@ class SettingsPage extends StatelessWidget {
                   ),
                 )
                 .toList(growable: false),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text('REFRESH RATE', style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white54, letterSpacing: 1.4)),
+        const SizedBox(height: 10),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Live UI interval', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 6),
+                Text(
+                  'Lightweight Android counters refresh at this interval. Privileged FPS, process and GPU probes are throttled to 250 ms to avoid affecting the game.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white54),
+                ),
+                const SizedBox(height: 12),
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 250, label: Text('250 ms')),
+                    ButtonSegment(value: 500, label: Text('500 ms')),
+                    ButtonSegment(value: 1000, label: Text('1 s')),
+                  ],
+                  selected: {controller.refreshIntervalMs},
+                  onSelectionChanged: (values) => controller.setRefreshInterval(values.first),
+                  showSelectedIcon: false,
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 16),
@@ -118,7 +148,7 @@ class SettingsPage extends StatelessWidget {
           child: Padding(
             padding: const EdgeInsets.all(18),
             child: Text(
-              'GPU load and frequency are not standardized Android APIs. The app checks common Qualcomm KGSL and Mali/devfreq nodes, then parses vendor dumps. A device may still expose only the GPU model even when Shizuku is active.',
+              'GPU load and frequency are not public standardized Android APIs. FPSWatcher checks Qualcomm KGSL, Mali/devfreq, PowerVR and vendor paths in Standard, Shizuku and Root order. When a ROM blocks every readable counter, the app keeps the GPU model but marks load and clock as unavailable instead of inventing values.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white60, height: 1.45),
             ),
           ),
@@ -128,7 +158,7 @@ class SettingsPage extends StatelessWidget {
   }
 
   String _description(AccessMode mode) => switch (mode) {
-        AccessMode.auto => 'Prefer Shizuku, then Root, then Standard mode.',
+        AccessMode.auto => 'Prefer Root when granted, then Shizuku, then Standard mode.',
         AccessMode.standard => 'No privileged access. Maximum safe Android API coverage.',
         AccessMode.shizuku => 'Use Android shell/root identity through Shizuku UserService.',
         AccessMode.root => 'Use su directly for the widest sysfs access.',

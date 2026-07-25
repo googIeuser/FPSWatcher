@@ -9,7 +9,7 @@ import java.io.OutputStreamWriter
 import java.util.ArrayDeque
 
 object NativeSessionStore {
-    private const val MAX_SAMPLES = 21_600 // Six hours at one sample per second.
+    private const val MAX_SAMPLES = 43_200 // Six hours at two recorded samples per second.
     private val lock = Any()
     private val samples = ArrayDeque<HashMap<String, Any?>>()
 

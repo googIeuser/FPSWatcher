@@ -7,10 +7,13 @@ use std::os::raw::c_char;
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FpsStats {
+    source: Option<String>,
     average_fps: Option<f64>,
-    p90_fps: Option<f64>,
-    p99_fps: Option<f64>,
+    one_percent_low_fps: Option<f64>,
+    point_one_percent_low_fps: Option<f64>,
     frame_time_ms: Option<f64>,
+    frame_time_p95_ms: Option<f64>,
+    frame_time_p99_ms: Option<f64>,
     total_frames: Option<u64>,
     matched_layer: Option<String>,
 }
@@ -20,6 +23,7 @@ struct FpsStats {
 struct GpuStats {
     model: Option<String>,
     frequency_mhz: Option<f64>,
+    max_frequency_mhz: Option<f64>,
     load_percent: Option<f64>,
 }
 
@@ -55,7 +59,7 @@ pub extern "C" fn gw_parse_surfaceflinger(
 ) -> *mut c_char {
     let raw = c_string(raw_pointer);
     let package_name = c_string(package_pointer);
-    let stats = parse_surfaceflinger(&raw, &package_name);
+    let stats = parse_frame_stats(&raw, &package_name);
     into_raw_string(serde_json::to_string(&stats).unwrap_or_else(|_| "{}".to_string()))
 }
 
@@ -75,6 +79,22 @@ pub extern "C" fn gw_session_csv(json_pointer: *const c_char) -> *mut c_char {
     let input = c_string(json_pointer);
     let result = session_csv(&input).unwrap_or_default();
     into_raw_string(result)
+}
+
+fn parse_frame_stats(raw: &str, package_name: &str) -> FpsStats {
+    let source = if raw.contains("__FPSWATCHER_SOURCE=gfxinfo") {
+        "gfxinfo"
+    } else {
+        "surfaceflinger"
+    };
+
+    let mut result = if source == "gfxinfo" {
+        parse_gfxinfo(raw)
+    } else {
+        parse_surfaceflinger(raw, package_name)
+    };
+    result.source = Some(source.to_string());
+    result
 }
 
 fn parse_surfaceflinger(raw: &str, package_name: &str) -> FpsStats {
@@ -131,31 +151,93 @@ fn parse_surfaceflinger(raw: &str, package_name: &str) -> FpsStats {
             }
         });
 
-    let mut histogram: Vec<(u64, u64)> = histogram_regex
+    let mut histogram: Vec<(f64, u64)> = histogram_regex
         .captures_iter(best_section)
         .filter_map(|capture| {
-            let ms = capture.get(1)?.as_str().parse::<u64>().ok()?;
+            let ms = capture.get(1)?.as_str().parse::<f64>().ok()?;
             let count = capture.get(2)?.as_str().parse::<u64>().ok()?;
-            Some((ms, count))
+            (ms > 0.0 && ms < 5_000.0 && count > 0).then_some((ms, count))
         })
         .collect();
-    histogram.sort_by_key(|entry| entry.0);
+    histogram.sort_by(|a, b| a.0.total_cmp(&b.0));
 
     let histogram_total: u64 = histogram.iter().map(|entry| entry.1).sum();
-    let p90_fps = percentile_fps(&histogram, histogram_total, 0.90);
-    let p99_fps = percentile_fps(&histogram, histogram_total, 0.99);
+    let mean_frame_time = weighted_mean_ms(&histogram);
 
     FpsStats {
-        average_fps,
-        p90_fps,
-        p99_fps,
-        frame_time_ms: average_fps.filter(|fps| *fps > 0.0).map(|fps| 1000.0 / fps),
+        source: None,
+        average_fps: average_fps.or_else(|| mean_frame_time.map(|ms| 1000.0 / ms)),
+        one_percent_low_fps: tail_low_fps(&histogram, histogram_total, 0.01),
+        point_one_percent_low_fps: tail_low_fps(&histogram, histogram_total, 0.001),
+        frame_time_ms: mean_frame_time
+            .or_else(|| average_fps.filter(|fps| *fps > 0.0).map(|fps| 1000.0 / fps)),
+        frame_time_p95_ms: percentile_ms(&histogram, histogram_total, 0.95),
+        frame_time_p99_ms: percentile_ms(&histogram, histogram_total, 0.99),
         total_frames: total_frames.or_else(|| (histogram_total > 0).then_some(histogram_total)),
         matched_layer,
     }
 }
 
-fn percentile_fps(histogram: &[(u64, u64)], total: u64, percentile: f64) -> Option<f64> {
+fn parse_gfxinfo(raw: &str) -> FpsStats {
+    let mut durations_ms = Vec::<f64>::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || !trimmed.contains(',') {
+            continue;
+        }
+        let values: Vec<i64> = trimmed
+            .split(',')
+            .filter_map(|value| value.trim().parse::<i64>().ok())
+            .collect();
+        if values.len() < 17 || values[0] != 0 {
+            continue;
+        }
+        let intended_vsync = values[1];
+        let frame_completed = values[16];
+        if frame_completed <= intended_vsync {
+            continue;
+        }
+        let duration_ms = (frame_completed - intended_vsync) as f64 / 1_000_000.0;
+        if duration_ms.is_finite() && duration_ms > 0.0 && duration_ms < 5_000.0 {
+            durations_ms.push(duration_ms);
+        }
+    }
+
+    durations_ms.sort_by(|a, b| a.total_cmp(b));
+    let total = durations_ms.len() as u64;
+    let mean = if durations_ms.is_empty() {
+        None
+    } else {
+        Some(durations_ms.iter().sum::<f64>() / durations_ms.len() as f64)
+    };
+    let histogram: Vec<(f64, u64)> = durations_ms.iter().map(|value| (*value, 1)).collect();
+
+    FpsStats {
+        source: None,
+        average_fps: mean.map(|ms| 1000.0 / ms).map(|fps| fps.clamp(0.0, 1000.0)),
+        one_percent_low_fps: tail_low_fps(&histogram, total, 0.01),
+        point_one_percent_low_fps: tail_low_fps(&histogram, total, 0.001),
+        frame_time_ms: mean,
+        frame_time_p95_ms: percentile_ms(&histogram, total, 0.95),
+        frame_time_p99_ms: percentile_ms(&histogram, total, 0.99),
+        total_frames: (total > 0).then_some(total),
+        matched_layer: None,
+    }
+}
+
+fn weighted_mean_ms(histogram: &[(f64, u64)]) -> Option<f64> {
+    let count: u64 = histogram.iter().map(|entry| entry.1).sum();
+    if count == 0 {
+        return None;
+    }
+    let sum = histogram
+        .iter()
+        .map(|(ms, frames)| *ms * *frames as f64)
+        .sum::<f64>();
+    Some(sum / count as f64)
+}
+
+fn percentile_ms(histogram: &[(f64, u64)], total: u64, percentile: f64) -> Option<f64> {
     if total == 0 {
         return None;
     }
@@ -164,10 +246,33 @@ fn percentile_fps(histogram: &[(u64, u64)], total: u64, percentile: f64) -> Opti
     for (ms, count) in histogram {
         cumulative = cumulative.saturating_add(*count);
         if cumulative >= target {
-            return (*ms > 0).then_some(1000.0 / *ms as f64);
+            return Some(*ms);
         }
     }
-    None
+    histogram.last().map(|entry| entry.0)
+}
+
+fn tail_low_fps(histogram: &[(f64, u64)], total: u64, tail_fraction: f64) -> Option<f64> {
+    if total == 0 {
+        return None;
+    }
+    let mut remaining = ((total as f64 * tail_fraction).ceil() as u64).max(1);
+    let mut weighted_ms = 0.0;
+    let mut selected = 0_u64;
+    for (ms, count) in histogram.iter().rev() {
+        if remaining == 0 {
+            break;
+        }
+        let take = (*count).min(remaining);
+        weighted_ms += *ms * take as f64;
+        selected += take;
+        remaining -= take;
+    }
+    if selected == 0 || weighted_ms <= 0.0 {
+        None
+    } else {
+        Some(1000.0 / (weighted_ms / selected as f64))
+    }
 }
 
 fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
@@ -176,15 +281,21 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
 
     let mut model = (!fallback_model.trim().is_empty()).then(|| fallback_model.trim().to_string());
     let mut frequency_mhz = None;
+    let mut max_frequency_mhz = None;
     let mut load_percent = None;
 
     for capture in key_value_regex.captures_iter(raw) {
-        let key = capture.get(1).map(|v| v.as_str().to_ascii_lowercase()).unwrap_or_default();
+        let key = capture
+            .get(1)
+            .map(|v| v.as_str().to_ascii_lowercase())
+            .unwrap_or_default();
         let value = capture.get(2).map(|v| v.as_str().trim()).unwrap_or_default();
         if model.is_none() && matches!(key.as_str(), "model" | "renderer" | "gpu") && !value.is_empty() {
             model = Some(value.to_string());
         }
-        if frequency_mhz.is_none() && (key.contains("freq") || key.contains("clock")) {
+        if max_frequency_mhz.is_none() && (key.contains("maxfreq") || key.contains("max_freq")) {
+            max_frequency_mhz = first_number(value, &number_regex).map(normalize_frequency_mhz);
+        } else if frequency_mhz.is_none() && (key.contains("freq") || key.contains("clock")) {
             frequency_mhz = first_number(value, &number_regex).map(normalize_frequency_mhz);
         }
         if load_percent.is_none() && (key.contains("load") || key.contains("util") || key.contains("busy")) {
@@ -193,7 +304,10 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
     }
 
     if frequency_mhz.is_none() {
-        for line in raw.lines().filter(|line| line.to_ascii_lowercase().contains("freq")) {
+        for line in raw.lines().filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            (lower.contains("freq") || lower.contains("clock")) && !lower.contains("max")
+        }) {
             if let Some(value) = first_number(line, &number_regex) {
                 frequency_mhz = Some(normalize_frequency_mhz(value));
                 break;
@@ -216,6 +330,7 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
     GpuStats {
         model,
         frequency_mhz: frequency_mhz.filter(|value| value.is_finite() && *value >= 0.0),
+        max_frequency_mhz: max_frequency_mhz.filter(|value| value.is_finite() && *value >= 0.0),
         load_percent: load_percent.map(|value| value.clamp(0.0, 100.0)),
     }
 }
@@ -252,27 +367,39 @@ fn session_csv(input: &str) -> Result<String, serde_json::Error> {
     let rows: Vec<Value> = serde_json::from_str(input)?;
     let headers = [
         "timestamp",
+        "sampleIntervalMs",
         "foregroundPackage",
         "accessMode",
+        "fpsSource",
         "fps",
-        "p90Fps",
-        "p99Fps",
+        "onePercentLowFps",
+        "pointOnePercentLowFps",
         "frameTimeMs",
+        "frameTimeP95Ms",
+        "frameTimeP99Ms",
         "totalFrames",
         "cpuUsage",
         "cpuFrequencyMhz",
+        "cpuFrequencyMinMhz",
+        "cpuFrequencyMaxMhz",
+        "cpuCoreFrequenciesMhz",
+        "cpuGovernor",
         "appPid",
         "appCpuUsage",
         "appRamMb",
+        "appRssMb",
         "socTemperatureC",
         "gpuModel",
+        "gpuSource",
         "gpuFrequencyMhz",
+        "gpuFrequencyMaxMhz",
         "gpuLoad",
         "ramUsedMb",
         "ramTotalMb",
         "batteryLevel",
         "batteryTemperatureC",
         "batteryPowerW",
+        "batteryPowerSource",
         "batteryCharging",
         "batteryCurrentMa",
         "batteryVoltageV",
@@ -312,24 +439,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_surfaceflinger_histogram() {
+    fn parses_surfaceflinger_lows() {
         let input = r#"
+__FPSWATCHER_SOURCE=surfaceflinger
 layerName = SurfaceView[com.game/app]
 averageFPS = 60.0
-totalFrames = 100
+totalFrames = 1000
 presentToPresent histogram is as below:
-16ms=90 33ms=9 66ms=1
+8ms=100 16ms=880 33ms=15 66ms=5
 "#;
-        let result = parse_surfaceflinger(input, "com.game");
+        let result = parse_frame_stats(input, "com.game");
         assert_eq!(result.average_fps, Some(60.0));
-        assert!(result.p90_fps.is_some());
-        assert!(result.p99_fps.is_some());
+        assert!(result.one_percent_low_fps.is_some());
+        assert!(result.point_one_percent_low_fps.is_some());
+        assert_eq!(result.source.as_deref(), Some("surfaceflinger"));
     }
 
     #[test]
     fn parses_gpu_busy_pair() {
-        let result = parse_gpu("freq=800000000\nload=30 100", "Adreno");
+        let result = parse_gpu("freq=800000000\nmax_freq=1000000000\nload=30 100", "Adreno");
         assert_eq!(result.frequency_mhz, Some(800.0));
+        assert_eq!(result.max_frequency_mhz, Some(1000.0));
         assert_eq!(result.load_percent, Some(30.0));
     }
 }
