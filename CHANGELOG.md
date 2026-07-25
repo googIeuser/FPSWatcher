@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.4
+
+- Enabled Android `BuildConfig` generation in the app module so `ShizukuClient` can read `BuildConfig.DEBUG` under AGP 9.
+- Replaced the invalid literal-color `android:drawable` value in `launch_background.xml` with a nested rectangle shape and solid color.
+- Updated GitHub-maintained workflow actions to their Node.js 24 major versions (`checkout`, `setup-java`, and `upload-artifact`).
+- Fixes the `compileDebugKotlin` and `processDebugResources` failures seen after the AIDL stage.
+
 ## 1.0.3
 
 - Assigned an explicit AIDL transaction ID (`0`) to `execute` so every method in `IPrivilegedService` uses manual IDs.

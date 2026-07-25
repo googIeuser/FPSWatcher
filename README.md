@@ -40,7 +40,7 @@ The debug APK is created under `build/app/outputs/flutter-apk/`.
 
 ## GitHub Actions
 
-Pushing the repository triggers `.github/workflows/android.yml`. The workflow generates the Android host project, builds the Rust libraries for common Android ABIs, builds debug and release APKs, and uploads them as artifacts.
+Pushing the repository triggers `.github/workflows/android.yml`. The workflow generates the Android host project, builds the Rust libraries for common Android ABIs, builds debug and release APKs, and uploads them as artifacts. GitHub-maintained actions use their Node.js 24 major versions.
 
 ## Important Android permissions
 
