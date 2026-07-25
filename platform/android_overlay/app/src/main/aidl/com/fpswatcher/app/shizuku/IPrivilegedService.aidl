@@ -1,6 +1,6 @@
 package com.fpswatcher.app.shizuku;
 
 interface IPrivilegedService {
-    String execute(String command);
+    String execute(String command) = 0;
     void destroy() = 16777114;
 }

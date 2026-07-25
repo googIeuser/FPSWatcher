@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.3
+
+- Assigned an explicit AIDL transaction ID (`0`) to `execute` so every method in `IPrivilegedService` uses manual IDs.
+- Preserved Shizuku's required `destroy` transaction ID (`16777114` in AIDL).
+- Fixes the Android `compileDebugAidl` failure with Build Tools 36.
+
 ## 1.0.2
 
 - Migrated the Android application module to AGP 9 built-in Kotlin.
