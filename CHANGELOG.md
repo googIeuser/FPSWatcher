@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Removed two redundant `dart:typed_data` imports that caused `flutter analyze` to exit with code 1 in GitHub Actions.
+- No runtime or telemetry behavior changed.
+
 ## 1.0.0
 
 - Rebuilt the application with a Flutter UI, Rust parsing/export core, and Kotlin Android platform layer.
