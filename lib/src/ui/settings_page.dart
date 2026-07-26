@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../models/overlay_preferences.dart';
 import '../models/telemetry_sample.dart';
 import '../state/app_controller.dart';
 
