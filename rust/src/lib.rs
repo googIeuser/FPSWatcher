@@ -167,8 +167,12 @@ fn parse_surfaceflinger(raw: &str, package_name: &str) -> FpsStats {
     FpsStats {
         source: None,
         average_fps: average_fps.or_else(|| mean_frame_time.map(|ms| 1000.0 / ms)),
-        one_percent_low_fps: tail_low_fps(&histogram, histogram_total, 0.01),
-        point_one_percent_low_fps: tail_low_fps(&histogram, histogram_total, 0.001),
+        one_percent_low_fps: (histogram_total >= 100)
+            .then(|| tail_low_fps(&histogram, histogram_total, 0.01))
+            .flatten(),
+        point_one_percent_low_fps: (histogram_total >= 1_000)
+            .then(|| tail_low_fps(&histogram, histogram_total, 0.001))
+            .flatten(),
         frame_time_ms: mean_frame_time
             .or_else(|| average_fps.filter(|fps| *fps > 0.0).map(|fps| 1000.0 / fps)),
         frame_time_p95_ms: percentile_ms(&histogram, histogram_total, 0.95),
@@ -215,8 +219,12 @@ fn parse_gfxinfo(raw: &str) -> FpsStats {
     FpsStats {
         source: None,
         average_fps: mean.map(|ms| 1000.0 / ms).map(|fps| fps.clamp(0.0, 1000.0)),
-        one_percent_low_fps: tail_low_fps(&histogram, total, 0.01),
-        point_one_percent_low_fps: tail_low_fps(&histogram, total, 0.001),
+        one_percent_low_fps: (total >= 100)
+            .then(|| tail_low_fps(&histogram, total, 0.01))
+            .flatten(),
+        point_one_percent_low_fps: (total >= 1_000)
+            .then(|| tail_low_fps(&histogram, total, 0.001))
+            .flatten(),
         frame_time_ms: mean,
         frame_time_p95_ms: percentile_ms(&histogram, total, 0.95),
         frame_time_p99_ms: percentile_ms(&histogram, total, 0.99),
@@ -378,6 +386,7 @@ fn session_csv(input: &str) -> Result<String, serde_json::Error> {
         "frameTimeP95Ms",
         "frameTimeP99Ms",
         "totalFrames",
+        "frameWindowFrames",
         "cpuUsage",
         "cpuFrequencyMhz",
         "cpuFrequencyMinMhz",
@@ -462,4 +471,18 @@ presentToPresent histogram is as below:
         assert_eq!(result.max_frequency_mhz, Some(1000.0));
         assert_eq!(result.load_percent, Some(30.0));
     }
+    #[test]
+    fn withholds_lows_until_enough_frames_exist() {
+        let input = r#"
+__FPSWATCHER_SOURCE=surfaceflinger
+layerName = SurfaceView[com.game/app]
+averageFPS = 60.0
+presentToPresent histogram is as below:
+16ms=80 33ms=10
+"#;
+        let result = parse_frame_stats(input, "com.game");
+        assert!(result.one_percent_low_fps.is_none());
+        assert!(result.point_one_percent_low_fps.is_none());
+    }
+
 }

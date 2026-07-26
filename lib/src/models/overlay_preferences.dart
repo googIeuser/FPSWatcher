@@ -19,6 +19,7 @@ class OverlayPreferences {
     this.showPower = true,
     this.showBatteryTemperature = true,
     this.showSocTemperature = false,
+    this.showOnlyWhenGameDetected = true,
   });
 
   final double textSizeSp;
@@ -38,22 +39,42 @@ class OverlayPreferences {
   final bool showPower;
   final bool showBatteryTemperature;
   final bool showSocTemperature;
+  final bool showOnlyWhenGameDetected;
 
   Color get textColor => Color(textColorValue);
 
   factory OverlayPreferences.fromMap(Map<dynamic, dynamic> map) {
-    double number(String key, double fallback) =>
-        (map[key] as num?)?.toDouble() ?? fallback;
-    int integer(String key, int fallback) =>
-        (map[key] as num?)?.toInt() ?? fallback;
-    bool flag(String key, bool fallback) => map[key] as bool? ?? fallback;
+    double number(String key, double fallback) {
+      final value = map[key];
+      return value is num ? value.toDouble() : double.tryParse('$value') ?? fallback;
+    }
+
+    int integer(String key, int fallback) {
+      final value = map[key];
+      return value is num ? value.toInt() : int.tryParse('$value') ?? fallback;
+    }
+
+    bool flag(String key, bool fallback) {
+      final value = map[key];
+      if (value is bool) return value;
+      if (value is num) return value != 0;
+      return switch ('$value'.trim().toLowerCase()) {
+        'true' || '1' || 'yes' => true,
+        'false' || '0' || 'no' => false,
+        _ => fallback,
+      };
+    }
 
     return OverlayPreferences(
       textSizeSp: number('textSizeSp', 13).clamp(10, 24).toDouble(),
-      opacity: number('opacity', 0.92).clamp(0.25, 1).toDouble(),
+      opacity: number('opacity', 0.92).clamp(0.15, 1).toDouble(),
       paddingDp: integer('paddingDp', 10).clamp(0, 24).toInt(),
-      refreshIntervalMs: integer('refreshIntervalMs', 100).clamp(100, 1000).toInt(),
-      textColorValue: integer('textColorValue', 0xFFFFFFFF),
+      refreshIntervalMs: _allowedRefreshInterval(
+        integer('refreshIntervalMs', 100),
+      ),
+      textColorValue: _allowedTextColor(
+        integer('textColorValue', 0xFFFFFFFF),
+      ),
       showFps: flag('showFps', true),
       showLows: flag('showLows', true),
       showFrameTime: flag('showFrameTime', true),
@@ -66,6 +87,7 @@ class OverlayPreferences {
       showPower: flag('showPower', true),
       showBatteryTemperature: flag('showBatteryTemperature', true),
       showSocTemperature: flag('showSocTemperature', false),
+      showOnlyWhenGameDetected: flag('showOnlyWhenGameDetected', true),
     );
   }
 
@@ -87,6 +109,7 @@ class OverlayPreferences {
         'showPower': showPower,
         'showBatteryTemperature': showBatteryTemperature,
         'showSocTemperature': showSocTemperature,
+        'showOnlyWhenGameDetected': showOnlyWhenGameDetected,
       };
 
   OverlayPreferences copyWith({
@@ -107,6 +130,7 @@ class OverlayPreferences {
     bool? showPower,
     bool? showBatteryTemperature,
     bool? showSocTemperature,
+    bool? showOnlyWhenGameDetected,
   }) {
     return OverlayPreferences(
       textSizeSp: textSizeSp ?? this.textSizeSp,
@@ -127,6 +151,26 @@ class OverlayPreferences {
       showBatteryTemperature:
           showBatteryTemperature ?? this.showBatteryTemperature,
       showSocTemperature: showSocTemperature ?? this.showSocTemperature,
+      showOnlyWhenGameDetected:
+          showOnlyWhenGameDetected ?? this.showOnlyWhenGameDetected,
     );
+  }
+
+  static int _allowedRefreshInterval(int value) {
+    const allowed = <int>[100, 200, 500];
+    return allowed.reduce(
+      (best, candidate) =>
+          (candidate - value).abs() < (best - value).abs() ? candidate : best,
+    );
+  }
+
+  static int _allowedTextColor(int value) {
+    const allowed = <int>[
+      0xFFFFFFFF,
+      0xFF39E7D0,
+      0xFF7CFF84,
+      0xFFFFD65A,
+    ];
+    return allowed.contains(value) ? value : 0xFFFFFFFF;
   }
 }

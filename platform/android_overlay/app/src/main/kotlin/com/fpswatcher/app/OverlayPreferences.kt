@@ -32,6 +32,7 @@ object OverlayPreferences {
             "showPower" to p.getBoolean("showPower", true),
             "showBatteryTemperature" to p.getBoolean("showBatteryTemperature", true),
             "showSocTemperature" to p.getBoolean("showSocTemperature", false),
+            "showOnlyWhenGameDetected" to p.getBoolean("showOnlyWhenGameDetected", true),
             "revision" to p.getLong(KEY_REVISION, 0L),
         )
     }
@@ -40,10 +41,14 @@ object OverlayPreferences {
         val p = prefs(context)
         val editor = p.edit()
         values["textSizeSp"].asDouble()?.let { editor.putFloat("textSizeSp", it.coerceIn(10.0, 24.0).toFloat()) }
-        values["opacity"].asDouble()?.let { editor.putFloat("opacity", it.coerceIn(0.25, 1.0).toFloat()) }
+        values["opacity"].asDouble()?.let { editor.putFloat("opacity", it.coerceIn(0.15, 1.0).toFloat()) }
         values["paddingDp"].asInt()?.let { editor.putInt("paddingDp", it.coerceIn(0, 24)) }
-        values["refreshIntervalMs"].asInt()?.let { editor.putInt("refreshIntervalMs", it.coerceIn(100, 1000)) }
-        values["textColorValue"].asInt()?.let { editor.putInt("textColorValue", it) }
+        values["refreshIntervalMs"].asInt()?.let { value ->
+            editor.putInt("refreshIntervalMs", ALLOWED_REFRESH.minBy { kotlin.math.abs(it - value) })
+        }
+        values["textColorValue"].asInt()?.let { value ->
+            editor.putInt("textColorValue", value.takeIf(ALLOWED_TEXT_COLORS::contains) ?: -1)
+        }
         BOOLEAN_KEYS.forEach { key ->
             (values[key] as? Boolean)?.let { editor.putBoolean(key, it) }
         }
@@ -79,6 +84,9 @@ object OverlayPreferences {
         else -> null
     }
 
+    private val ALLOWED_REFRESH = listOf(100, 200, 500)
+    private val ALLOWED_TEXT_COLORS = setOf(-1, 0xFF39E7D0.toInt(), 0xFF7CFF84.toInt(), 0xFFFFD65A.toInt())
+
     private val BOOLEAN_KEYS = listOf(
         "showFps",
         "showLows",
@@ -92,5 +100,6 @@ object OverlayPreferences {
         "showPower",
         "showBatteryTemperature",
         "showSocTemperature",
+        "showOnlyWhenGameDetected",
     )
 }

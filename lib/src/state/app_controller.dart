@@ -47,6 +47,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> initialize() async {
     WidgetsBinding.instance.addObserver(this);
+    await _loadAccessMode();
     await refreshStatus();
     await _loadOverlayPreferences();
     if (recorder.isRecording || recorder.totalCount > 0) {
@@ -60,8 +61,24 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     _timer?.cancel();
     _timer = Timer.periodic(
       Duration(milliseconds: refreshIntervalMs),
-      (_) => collectNow(),
+      (_) => _handleTick(),
     );
+  }
+
+
+  void _handleTick() {
+    if (pageIndex == 0) {
+      unawaited(collectNow());
+      return;
+    }
+    if (recorder.isRecording) {
+      final now = DateTime.now();
+      if (_lastRecordingSync == null ||
+          now.difference(_lastRecordingSync!).inMilliseconds >= 2000) {
+        _lastRecordingSync = now;
+        unawaited(_syncRecordedSamples(limit: 60));
+      }
+    }
   }
 
   @override
@@ -73,6 +90,17 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _timer?.cancel();
       _timer = null;
+    }
+  }
+
+  Future<void> _loadAccessMode() async {
+    try {
+      final saved = await nativeBridge.getAccessMode();
+      accessMode = saved == AccessMode.root.wireName
+          ? AccessMode.root
+          : AccessMode.shizuku;
+    } catch (_) {
+      accessMode = AccessMode.shizuku;
     }
   }
 
@@ -88,8 +116,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       rootInstalled = status['rootInstalled'] == true;
       rootAvailable = status['rootAvailable'] == true;
       shizukuUid = (status['shizukuUid'] as num?)?.toInt() ?? -1;
-      rootError = status['rootError'] as String?;
-      shizukuError = status['shizukuError'] as String?;
+      rootError = status['rootError']?.toString();
+      shizukuError = status['shizukuError']?.toString();
       overlayRunning = status['overlayRunning'] == true;
       monitorServiceRunning = status['monitorServiceRunning'] == true;
       recorder.restoreState(
@@ -98,8 +126,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       );
       lastError = null;
       notifyListeners();
-    } catch (_) {
-      lastError = 'Status could not be refreshed. Tap refresh to retry.';
+    } catch (error) {
+      lastError = 'Status could not be refreshed: $error';
       notifyListeners();
     }
   }
@@ -133,8 +161,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       }
       lastError = null;
       notifyListeners();
-    } catch (_) {
-      lastError = 'Telemetry collection was interrupted. Retrying automatically.';
+    } catch (error) {
+      lastError = 'Telemetry collection was interrupted: $error';
       notifyListeners();
     } finally {
       _collecting = false;
@@ -143,6 +171,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   void setAccessMode(AccessMode mode) {
     accessMode = mode;
+    unawaited(nativeBridge.setAccessMode(mode.wireName));
     notifyListeners();
     if (mode == AccessMode.root && !rootAvailable) {
       unawaited(requestRootPermission());
@@ -160,8 +189,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setPage(int index) {
+    if (pageIndex == index) return;
     pageIndex = index;
     notifyListeners();
+    if (index == 0) {
+      unawaited(collectNow());
+    } else if (index == 1) {
+      unawaited(_syncRecordedSamples(limit: 60));
+    }
   }
 
   Future<void> _ensurePrivilegedBackend() async {
@@ -180,8 +215,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         await _syncRecordedSamples();
       } else {
         await _ensurePrivilegedBackend();
-        recorder.start();
         await nativeBridge.startRecording(accessMode.wireName);
+        recorder.start();
         await _syncRecordedSamples(limit: 30);
       }
       await refreshStatus();
@@ -293,21 +328,54 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (_syncingRecording) return;
     _syncingRecording = true;
     try {
-      final batch = await nativeBridge.getRecordedSamples(limit: limit);
-      final rawSamples = (batch['samples'] as List<dynamic>? ?? const [])
-          .whereType<Map<dynamic, dynamic>>();
-      final samples = rawSamples
-          .map(TelemetrySample.fromNative)
-          .toList(growable: false);
+      final samples = <TelemetrySample>[];
+      var totalCount = 0;
+      var recording = false;
+
+      if (limit != null) {
+        final batch = await nativeBridge.getRecordedSamples(limit: limit);
+        samples.addAll(_decodeRecordedSamples(batch['samples']));
+        totalCount = _intValue(batch['totalCount']) ?? samples.length;
+        recording = batch['recording'] == true;
+      } else {
+        const pageSize = 1000;
+        var offset = 0;
+        do {
+          final batch = await nativeBridge.getRecordedSamples(
+            limit: pageSize,
+            offset: offset,
+          );
+          final page = _decodeRecordedSamples(batch['samples']);
+          samples.addAll(page);
+          totalCount = _intValue(batch['totalCount']) ?? samples.length;
+          recording = batch['recording'] == true;
+          offset += page.length;
+          if (page.isEmpty) break;
+        } while (offset < totalCount);
+      }
+
       recorder.replaceSamples(
         samples,
-        totalCount: (batch['totalCount'] as num?)?.toInt() ?? samples.length,
-        recording: batch['recording'] == true,
+        totalCount: totalCount,
+        recording: recording,
       );
       if (notify) notifyListeners();
     } finally {
       _syncingRecording = false;
     }
+  }
+
+  List<TelemetrySample> _decodeRecordedSamples(dynamic value) {
+    final rawSamples = value is List ? value : const <dynamic>[];
+    return rawSamples
+        .whereType<Map>()
+        .map((item) => TelemetrySample.fromNative(item))
+        .toList(growable: false);
+  }
+
+  int? _intValue(dynamic value) {
+    if (value is num) return value.toInt();
+    return int.tryParse('$value');
   }
 
   String _fileStamp(DateTime time) {

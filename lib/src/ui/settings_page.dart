@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/overlay_preferences.dart';
 import '../models/telemetry_sample.dart';
 import '../state/app_controller.dart';
 
@@ -117,6 +118,8 @@ class SettingsPage extends StatelessWidget {
                       ),
                 ),
                 const SizedBox(height: 16),
+                _OverlayPreview(preferences: overlay),
+                const SizedBox(height: 18),
                 _SliderRow(
                   label: 'Text size',
                   valueLabel: '${overlay.textSizeSp.toStringAsFixed(0)} sp',
@@ -129,10 +132,10 @@ class SettingsPage extends StatelessWidget {
                   ),
                 ),
                 _SliderRow(
-                  label: 'Opacity',
+                  label: 'Background opacity',
                   valueLabel: '${(overlay.opacity * 100).round()}%',
                   value: overlay.opacity,
-                  min: 0.25,
+                  min: 0.15,
                   max: 1,
                   divisions: 15,
                   onChanged: (value) => controller.updateOverlayPreferences(
@@ -208,6 +211,13 @@ class SettingsPage extends StatelessWidget {
         Card(
           child: Column(
             children: [
+              _MetricSwitch(
+                title: 'Show only when a foreground app is detected',
+                value: overlay.showOnlyWhenGameDetected,
+                onChanged: (value) => controller.updateOverlayPreferences(
+                  overlay.copyWith(showOnlyWhenGameDetected: value),
+                ),
+              ),
               _MetricSwitch(
                 title: 'FPS',
                 value: overlay.showFps,
@@ -419,6 +429,70 @@ class _SectionLabel extends StatelessWidget {
               letterSpacing: 1.4,
             ),
       );
+}
+
+class _OverlayPreview extends StatelessWidget {
+  const _OverlayPreview({required this.preferences});
+
+  final OverlayPreferences preferences;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = <String>[];
+    if (preferences.showFps || preferences.showLows) {
+      final values = <String>[];
+      if (preferences.showFps) values.add('FPS 120.0');
+      if (preferences.showLows) values.addAll(['1% 103.2', '0.1% 88.4']);
+      lines.add(values.join('  '));
+    }
+    if (preferences.showFrameTime) lines.add('FRAME 8.33 ms  P95 10.20');
+    if (preferences.showSystemCpu ||
+        preferences.showAppCpu ||
+        preferences.showCpuFrequency) {
+      final values = <String>[];
+      if (preferences.showSystemCpu) values.add('CPU 42.0%');
+      if (preferences.showCpuFrequency) values.add('3302 MHz');
+      if (preferences.showAppCpu) values.add('APP 168.0%');
+      lines.add(values.join('  '));
+    }
+    if (preferences.showGpuLoad || preferences.showGpuFrequency) {
+      final values = <String>[];
+      if (preferences.showGpuLoad) values.add('GPU 81.0%');
+      if (preferences.showGpuFrequency) values.add('900 MHz');
+      lines.add(values.join('  '));
+    }
+    if (preferences.showGameRam) lines.add('RAM 2640 MB  RSS 2910 MB');
+    if (preferences.showPower ||
+        preferences.showBatteryTemperature ||
+        preferences.showSocTemperature) {
+      final values = <String>[];
+      if (preferences.showPower) values.add('PWR 5.82 W');
+      if (preferences.showBatteryTemperature) values.add('BAT 38.7°C');
+      if (preferences.showSocTemperature) values.add('SOC 44.2°C');
+      lines.add(values.join('  '));
+    }
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: EdgeInsets.all(preferences.paddingDp.toDouble()),
+        decoration: BoxDecoration(
+          color: const Color(0xFF071018).withValues(alpha: preferences.opacity),
+          border: Border.all(color: const Color(0x8839E7D0)),
+        ),
+        child: Text(
+          lines.isEmpty ? 'FPSWatcher' : lines.join('\n'),
+          style: TextStyle(
+            color: preferences.textColor,
+            fontFamily: 'monospace',
+            fontWeight: FontWeight.w700,
+            fontSize: preferences.textSizeSp,
+            height: 1.15,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _SliderRow extends StatelessWidget {

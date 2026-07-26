@@ -216,14 +216,18 @@ class _DashboardPageState extends State<DashboardPage> {
                   ),
                   MetricCard(
                     title: 'Instant power',
-                    value: sample?.batteryPowerW == null
-                        ? 'Unavailable'
-                        : '${_number(sample?.batteryPowerW, decimals: 2)} W',
-                    subtitle: sample?.batteryVoltageV == null
-                        ? 'Battery-side estimate'
-                        : '${_number(sample?.batteryVoltageV, decimals: 2)} V · '
-                            '${_number(sample?.batteryCurrentMa)} mA · '
-                            '${sample?.batteryPowerSource ?? 'sensor'}',
+                    value: sample?.batteryCharging == true
+                        ? 'Charging'
+                        : sample?.batteryPowerW == null
+                            ? 'Unavailable'
+                            : '${_number(sample?.batteryPowerW, decimals: 2)} W',
+                    subtitle: sample?.batteryCharging == true
+                        ? 'Discharge power is hidden while charging'
+                        : sample?.batteryVoltageV == null
+                            ? 'Battery-side estimate'
+                            : '${_number(sample?.batteryVoltageV, decimals: 2)} V · '
+                                '${_number(sample?.batteryCurrentMa)} mA · '
+                                '${sample?.batteryPowerSource ?? 'sensor'}',
                     icon: Icons.bolt_outlined,
                   ),
                   MetricCard(
@@ -523,7 +527,7 @@ class _FpsHero extends StatelessWidget {
               const Spacer(),
               Text(
                 'P99 ${_value(sample?.frameTimeP99Ms, 2)} ms · '
-                '${sample?.totalFrames ?? 0} frames',
+                '${sample?.frameWindowFrames ?? sample?.totalFrames ?? '—'} rolling frames',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.white38),
               ),
             ],

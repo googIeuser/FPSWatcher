@@ -39,6 +39,7 @@ class OverlayService : Service() {
     private var lastRecordedMs = 0L
     private var styleRevision = -1L
     private var overlayConfig: Map<String, Any> = emptyMap()
+    @Volatile private var destroyed = false
 
     override fun onCreate() {
         super.onCreate()
@@ -105,6 +106,10 @@ class OverlayService : Service() {
                 layoutParams = params
                 isOverlayVisible = true
                 applyOverlayStyle(force = true)
+                view.post {
+                    clampToScreen(params, view)
+                    runCatching { windowManager.updateViewLayout(view, params) }
+                }
             }
     }
 
@@ -126,11 +131,16 @@ class OverlayService : Service() {
     }
 
     private fun scheduleUpdate(delayMs: Long) {
+        if (destroyed) return
         handler.postDelayed({
+            if (destroyed) return@postDelayed
             applyOverlayStyle()
             if (updating.compareAndSet(false, true)) {
                 executor.execute {
-                    val snapshot = runCatching { collector.collect(mode) }.getOrNull()
+                    val snapshot = runCatching {
+                        TelemetrySnapshotCache.get(mode, 90L)
+                            ?: collector.collect(mode).also { TelemetrySnapshotCache.put(mode, it) }
+                    }.getOrNull()
                     if (snapshot != null && NativeSessionStore.isRecording) {
                         val now = System.currentTimeMillis()
                         if (now - lastRecordedMs >= 500L) {
@@ -139,6 +149,7 @@ class OverlayService : Service() {
                         }
                     }
                     handler.post {
+                        if (destroyed) return@post
                         if (snapshot != null && overlayView != null) {
                             updateOverlayVisibility(snapshot)
                             updateText(snapshot)
@@ -153,8 +164,10 @@ class OverlayService : Service() {
         }, delayMs)
     }
 
-    private fun refreshInterval(): Int =
-        (overlayConfig["refreshIntervalMs"] as? Number)?.toInt()?.coerceIn(100, 1000) ?: 100
+    private fun refreshInterval(): Int {
+        val requested = (overlayConfig["refreshIntervalMs"] as? Number)?.toInt() ?: 100
+        return listOf(100, 200, 500).minBy { kotlin.math.abs(it - requested) }
+    }
 
     private fun applyOverlayStyle(force: Boolean = false) {
         val revision = OverlayPreferences.revision(this)
@@ -165,13 +178,15 @@ class OverlayService : Service() {
         val padding = dp((overlayConfig["paddingDp"] as? Number)?.toInt() ?: 10)
         view.setPadding(padding, padding, padding, padding)
         view.textSize = (overlayConfig["textSizeSp"] as? Number)?.toFloat() ?: 13f
-        view.alpha = (overlayConfig["opacity"] as? Number)?.toFloat()?.coerceIn(0.25f, 1f) ?: 0.92f
+        val backgroundOpacity =
+            (overlayConfig["opacity"] as? Number)?.toFloat()?.coerceIn(0.15f, 1f) ?: 0.92f
+        view.alpha = 1f
         view.setTextColor((overlayConfig["textColorValue"] as? Number)?.toInt() ?: Color.WHITE)
         view.background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = 0f
-            setColor(Color.argb(235, 7, 16, 24))
-            setStroke(dp(1), Color.argb(105, 57, 231, 208))
+            setColor(Color.argb((255f * backgroundOpacity).roundToInt(), 7, 16, 24))
+            setStroke(dp(1), Color.argb(135, 57, 231, 208))
         }
     }
 
@@ -180,8 +195,12 @@ class OverlayService : Service() {
 
     private fun updateOverlayVisibility(data: Map<String, Any?>) {
         val foreground = data["foregroundPackage"] as? String
-        val shouldHide = foreground == packageName ||
+        val showOnlyWithForeground = enabled("showOnlyWhenGameDetected", true)
+        val shouldHide = data["backendOperational"] == false ||
+            (showOnlyWithForeground && foreground.isNullOrBlank()) ||
+            foreground == packageName ||
             foreground == "com.android.settings" ||
+            foreground == "com.android.systemui" ||
             foreground?.startsWith("com.android.permissioncontroller") == true
         overlayView?.visibility = if (shouldHide) View.GONE else View.VISIBLE
     }
@@ -219,7 +238,13 @@ class OverlayService : Service() {
         }
         if (enabled("showPower") || enabled("showBatteryTemperature") || enabled("showSocTemperature")) {
             val parts = mutableListOf<String>()
-            if (enabled("showPower")) parts += "PWR ${decimal2(data["batteryPowerW"])} W"
+            if (enabled("showPower")) {
+                parts += if (data["batteryCharging"] == true) {
+                    "PWR CHG"
+                } else {
+                    "PWR ${decimal2(data["batteryPowerW"])} W"
+                }
+            }
             if (enabled("showBatteryTemperature")) parts += "BAT ${decimal(data["batteryTemperatureC"])}°C"
             if (enabled("showSocTemperature")) parts += "SOC ${decimal(data["socTemperatureC"])}°C"
             if (parts.isNotEmpty()) lines += parts.joinToString("  ")
@@ -284,11 +309,20 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        destroyed = true
         handler.removeCallbacksAndMessages(null)
         executor.shutdownNow()
         hideOverlay()
         isRunning = false
         super.onDestroy()
+    }
+
+    private fun clampToScreen(params: WindowManager.LayoutParams, view: View) {
+        val metrics = resources.displayMetrics
+        val maxX = (metrics.widthPixels - view.measuredWidth).coerceAtLeast(0)
+        val maxY = (metrics.heightPixels - view.measuredHeight).coerceAtLeast(0)
+        params.x = params.x.coerceIn(0, maxX)
+        params.y = params.y.coerceIn(0, maxY)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
@@ -313,13 +347,15 @@ class OverlayService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     params.x = initialX + (event.rawX - initialTouchX).roundToInt()
                     params.y = initialY + (event.rawY - initialTouchY).roundToInt()
-                    overlayView?.let { windowManager.updateViewLayout(it, params) }
+                    clampToScreen(params, view)
+                    overlayView?.let { runCatching { windowManager.updateViewLayout(it, params) } }
                     return true
                 }
 
-                MotionEvent.ACTION_UP -> {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    clampToScreen(params, view)
                     OverlayPreferences.savePosition(this@OverlayService, params.x, params.y)
-                    view.performClick()
+                    if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
                     return true
                 }
             }

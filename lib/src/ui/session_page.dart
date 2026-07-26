@@ -80,7 +80,7 @@ class SessionPage extends StatelessWidget {
           children: [
             Expanded(child: _Stat(label: 'Average FPS', value: average)),
             const SizedBox(width: 10),
-            Expanded(child: _Stat(label: '1% low', value: averageLow)),
+            Expanded(child: _Stat(label: 'Avg 1% low', value: averageLow)),
             const SizedBox(width: 10),
             Expanded(child: _Stat(label: 'Peak watts', value: peakPower, suffix: ' W')),
           ],

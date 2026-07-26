@@ -61,6 +61,7 @@ class SessionRecorder {
       'frameTimeP95Ms',
       'frameTimeP99Ms',
       'totalFrames',
+      'frameWindowFrames',
       'cpuUsage',
       'cpuFrequencyMhz',
       'cpuFrequencyMinMhz',

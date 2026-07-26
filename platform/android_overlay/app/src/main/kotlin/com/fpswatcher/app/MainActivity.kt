@@ -38,17 +38,46 @@ class MainActivity : FlutterActivity() {
             "collectSnapshot" -> {
                 val mode = call.argument<String>("mode") ?: "shizuku"
                 executor.execute {
-                    runCatching { collector.collect(mode) }
-                        .onSuccess { data -> runOnUiThread { result.success(data) } }
+                    runCatching {
+                        TelemetrySnapshotCache.get(mode, 90L)
+                            ?: collector.collect(mode).also { TelemetrySnapshotCache.put(mode, it) }
+                    }
+                        .onSuccess { data -> runOnUiThread { result.success(FlutterChannelValue.sanitize(data)) } }
                         .onFailure { error ->
-                            runOnUiThread { result.error("collect_failed", error.message, null) }
+                            runOnUiThread {
+                                result.error(
+                                    "collect_failed",
+                                    error.message ?: error.javaClass.simpleName,
+                                    null,
+                                )
+                            }
                         }
                 }
             }
 
+            "getAccessMode" -> {
+                val saved = getSharedPreferences(APP_PREFERENCES, MODE_PRIVATE)
+                    .getString(KEY_ACCESS_MODE, "shizuku")
+                    ?.takeIf { it == "root" || it == "shizuku" }
+                    ?: "shizuku"
+                result.success(saved)
+            }
+
+            "setAccessMode" -> {
+                val mode = call.argument<String>("mode")
+                    ?.takeIf { it == "root" || it == "shizuku" }
+                    ?: "shizuku"
+                getSharedPreferences(APP_PREFERENCES, MODE_PRIVATE)
+                    .edit()
+                    .putString(KEY_ACCESS_MODE, mode)
+                    .apply()
+                TelemetrySnapshotCache.clear()
+                result.success(null)
+            }
+
             "getStatus" -> executor.execute {
                 runCatching { collector.status() }
-                    .onSuccess { data -> runOnUiThread { result.success(data) } }
+                    .onSuccess { data -> runOnUiThread { result.success(FlutterChannelValue.sanitize(data)) } }
                     .onFailure { error ->
                         runOnUiThread { result.error("status_failed", error.message, null) }
                     }
@@ -113,15 +142,25 @@ class MainActivity : FlutterActivity() {
                     return
                 }
                 val mode = call.argument<String>("mode") ?: "shizuku"
-                startMonitorService(
-                    Intent(this, OverlayService::class.java)
-                        .putExtra(OverlayService.EXTRA_MODE, mode)
-                        .putExtra(
-                            OverlayService.EXTRA_OVERLAY_ACTION,
-                            OverlayService.OVERLAY_SHOW,
-                        ),
-                )
-                result.success(null)
+                executor.execute {
+                    val operational = backendOperational(mode)
+                    val error = if (operational) null else backendError(mode)
+                    runOnUiThread {
+                        if (!operational) {
+                            result.error("backend_unavailable", error, null)
+                            return@runOnUiThread
+                        }
+                        startMonitorService(
+                            Intent(this, OverlayService::class.java)
+                                .putExtra(OverlayService.EXTRA_MODE, mode)
+                                .putExtra(
+                                    OverlayService.EXTRA_OVERLAY_ACTION,
+                                    OverlayService.OVERLAY_SHOW,
+                                ),
+                        )
+                        result.success(null)
+                    }
+                }
             }
 
             "stopOverlay" -> {
@@ -137,16 +176,26 @@ class MainActivity : FlutterActivity() {
 
             "startRecording" -> {
                 val mode = call.argument<String>("mode") ?: "shizuku"
-                NativeSessionStore.start()
-                startMonitorService(
-                    Intent(this, OverlayService::class.java)
-                        .putExtra(OverlayService.EXTRA_MODE, mode)
-                        .putExtra(
-                            OverlayService.EXTRA_RECORDING_ACTION,
-                            OverlayService.RECORDING_START,
-                        ),
-                )
-                result.success(null)
+                executor.execute {
+                    val operational = backendOperational(mode)
+                    val error = if (operational) null else backendError(mode)
+                    runOnUiThread {
+                        if (!operational) {
+                            result.error("backend_unavailable", error, null)
+                            return@runOnUiThread
+                        }
+                        NativeSessionStore.start()
+                        startMonitorService(
+                            Intent(this, OverlayService::class.java)
+                                .putExtra(OverlayService.EXTRA_MODE, mode)
+                                .putExtra(
+                                    OverlayService.EXTRA_RECORDING_ACTION,
+                                    OverlayService.RECORDING_START,
+                                ),
+                        )
+                        result.success(null)
+                    }
+                }
             }
 
             "stopRecording" -> {
@@ -163,18 +212,25 @@ class MainActivity : FlutterActivity() {
 
             "getRecordedSamples" -> {
                 val limit = call.argument<Int>("limit")
+                val offset = call.argument<Int>("offset")
                 executor.execute {
+                    val samples = if (offset == null) {
+                        NativeSessionStore.snapshot(limit)
+                    } else {
+                        NativeSessionStore.snapshotPage(offset, limit ?: 1_000)
+                    }
                     val batch = hashMapOf<String, Any?>(
-                        "samples" to NativeSessionStore.snapshot(limit),
+                        "samples" to samples,
                         "totalCount" to NativeSessionStore.count(),
                         "recording" to NativeSessionStore.isRecording,
+                        "offset" to (offset ?: 0),
                     )
-                    runOnUiThread { result.success(batch) }
+                    runOnUiThread { result.success(FlutterChannelValue.sanitize(batch)) }
                 }
             }
 
             "getOverlayPreferences" -> {
-                result.success(OverlayPreferences.snapshot(applicationContext))
+                result.success(FlutterChannelValue.sanitize(OverlayPreferences.snapshot(applicationContext)))
             }
 
             "setOverlayPreferences" -> {
@@ -198,6 +254,16 @@ class MainActivity : FlutterActivity() {
             "saveBytes" -> saveBytes(call, result)
             else -> result.notImplemented()
         }
+    }
+
+    private fun backendOperational(mode: String): Boolean = when (mode.lowercase()) {
+        "root" -> RootShell.isAvailable()
+        else -> ShizukuClient.hasPermission() && ShizukuClient.isOperational()
+    }
+
+    private fun backendError(mode: String): String = when (mode.lowercase()) {
+        "root" -> RootShell.lastError ?: "Root access is unavailable or denied."
+        else -> ShizukuClient.lastError ?: "Shizuku UserService is unavailable."
     }
 
     private fun startMonitorService(intent: Intent) {
@@ -264,6 +330,8 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val CHANNEL = "fpswatcher/native"
+        private const val APP_PREFERENCES = "fpswatcher_app"
+        private const val KEY_ACCESS_MODE = "access_mode"
         private const val EXPORT_REQUEST_CODE = 4421
     }
 }

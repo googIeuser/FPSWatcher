@@ -27,6 +27,7 @@ class TelemetrySample {
     this.frameTimeP95Ms,
     this.frameTimeP99Ms,
     this.totalFrames,
+    this.frameWindowFrames,
     this.cpuUsage,
     this.cpuFrequencyMhz,
     this.cpuFrequencyMinMhz,
@@ -78,6 +79,7 @@ class TelemetrySample {
   final double? frameTimeP95Ms;
   final double? frameTimeP99Ms;
   final int? totalFrames;
+  final int? frameWindowFrames;
   final double? cpuUsage;
   final double? cpuFrequencyMhz;
   final double? cpuFrequencyMinMhz;
@@ -113,30 +115,51 @@ class TelemetrySample {
   final String? gpuRaw;
   final List<String> collectorWarnings;
 
-  static double? _d(dynamic value) =>
-      value is num ? value.toDouble() : double.tryParse('$value');
-  static int? _i(dynamic value) =>
-      value is num ? value.toInt() : int.tryParse('$value');
+  static double? _d(dynamic value) {
+    if (value == null) return null;
+    return value is num ? value.toDouble() : double.tryParse('$value');
+  }
+
+  static int? _i(dynamic value) {
+    if (value == null) return null;
+    return value is num ? value.toInt() : int.tryParse('$value');
+  }
+
+  static String? _s(dynamic value) {
+    if (value == null) return null;
+    final text = '$value'.trim();
+    return text.isEmpty || text == 'null' ? null : text;
+  }
+
+  static bool? _b(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    return switch ('$value'.trim().toLowerCase()) {
+      'true' || '1' || 'yes' => true,
+      'false' || '0' || 'no' => false,
+      _ => null,
+    };
+  }
+
+  static List<dynamic> _list(dynamic value) =>
+      value is List ? value.cast<dynamic>() : const <dynamic>[];
+
   static List<double> _doubleList(dynamic value) =>
-      (value as List<dynamic>? ?? const <dynamic>[])
-          .map(_d)
-          .whereType<double>()
-          .toList(growable: false);
+      _list(value).map(_d).whereType<double>().toList(growable: false);
 
   factory TelemetrySample.fromNative(Map<dynamic, dynamic> source) {
+    final timestampMs = _i(source['timestampMs']);
     return TelemetrySample(
-      timestamp: source['timestampMs'] is num
-          ? DateTime.fromMillisecondsSinceEpoch(
-              (source['timestampMs'] as num).toInt(),
-            )
-          : DateTime.now(),
+      timestamp: timestampMs == null
+          ? DateTime.now()
+          : DateTime.fromMillisecondsSinceEpoch(timestampMs),
       sampleIntervalMs: _i(source['sampleIntervalMs']),
-      foregroundPackage: source['foregroundPackage'] as String?,
-      accessModeRequested: (source['accessModeRequested'] as String?) ?? 'shizuku',
-      accessModeUsed: (source['accessModeUsed'] as String?) ?? 'shizuku',
-      backendOperational: source['backendOperational'] != false,
-      backendError: source['backendError'] as String?,
-      fpsSource: source['fpsSource'] as String?,
+      foregroundPackage: _s(source['foregroundPackage']),
+      accessModeRequested: _s(source['accessModeRequested']) ?? 'shizuku',
+      accessModeUsed: _s(source['accessModeUsed']) ?? 'shizuku',
+      backendOperational: _b(source['backendOperational']) ?? true,
+      backendError: _s(source['backendError']),
+      fpsSource: _s(source['fpsSource']),
       fps: _d(source['fps']),
       onePercentLowFps: _d(source['onePercentLowFps']) ?? _d(source['p99Fps']),
       pointOnePercentLowFps:
@@ -145,19 +168,20 @@ class TelemetrySample {
       frameTimeP95Ms: _d(source['frameTimeP95Ms']),
       frameTimeP99Ms: _d(source['frameTimeP99Ms']),
       totalFrames: _i(source['totalFrames']),
+      frameWindowFrames: _i(source['frameWindowFrames']),
       cpuUsage: _d(source['cpuUsage']),
       cpuFrequencyMhz: _d(source['cpuFrequencyMhz']),
       cpuFrequencyMinMhz: _d(source['cpuFrequencyMinMhz']),
       cpuFrequencyMaxMhz: _d(source['cpuFrequencyMaxMhz']),
       cpuCoreFrequenciesMhz: _doubleList(source['cpuCoreFrequenciesMhz']),
-      cpuGovernor: source['cpuGovernor'] as String?,
+      cpuGovernor: _s(source['cpuGovernor']),
       appPid: _i(source['appPid']),
       appCpuUsage: _d(source['appCpuUsage']),
       appRamMb: _d(source['appRamMb']),
       appRssMb: _d(source['appRssMb']),
       socTemperatureC: _d(source['socTemperatureC']),
-      gpuModel: source['gpuModel'] as String?,
-      gpuSource: source['gpuSource'] as String?,
+      gpuModel: _s(source['gpuModel']),
+      gpuSource: _s(source['gpuSource']),
       gpuFrequencyMhz: _d(source['gpuFrequencyMhz']),
       gpuFrequencyMaxMhz: _d(source['gpuFrequencyMaxMhz']),
       gpuLoad: _d(source['gpuLoad']),
@@ -166,8 +190,8 @@ class TelemetrySample {
       batteryLevel: _d(source['batteryLevel']),
       batteryTemperatureC: _d(source['batteryTemperatureC']),
       batteryPowerW: _d(source['batteryPowerW']),
-      batteryPowerSource: source['batteryPowerSource'] as String?,
-      batteryCharging: source['batteryCharging'] as bool?,
+      batteryPowerSource: _s(source['batteryPowerSource']),
+      batteryCharging: _b(source['batteryCharging']),
       batteryCurrentMa: _d(source['batteryCurrentMa']),
       batteryVoltageV: _d(source['batteryVoltageV']),
       thermalStatus: _i(source['thermalStatus']),
@@ -176,10 +200,10 @@ class TelemetrySample {
       txKbps: _d(source['txKbps']),
       storageUsedGb: _d(source['storageUsedGb']),
       storageTotalGb: _d(source['storageTotalGb']),
-      surfaceFlingerRaw: source['surfaceFlingerRaw'] as String?,
-      gpuRaw: source['gpuRaw'] as String?,
+      surfaceFlingerRaw: _s(source['surfaceFlingerRaw']),
+      gpuRaw: _s(source['gpuRaw']),
       collectorWarnings:
-          (source['collectorWarnings'] as List<dynamic>? ?? const <dynamic>[])
+          _list(source['collectorWarnings'])
               .map((value) => '$value')
               .toList(growable: false),
     );
@@ -197,18 +221,19 @@ class TelemetrySample {
       accessModeUsed: accessModeUsed,
       backendOperational: backendOperational,
       backendError: backendError,
-      fpsSource: (fpsData?['source'] as String?) ?? fpsSource,
-      fps: _d(fpsData?['averageFps']) ?? fps,
+      fpsSource: fpsSource ?? _s(fpsData?['source']),
+      fps: fps ?? _d(fpsData?['averageFps']),
       onePercentLowFps:
-          _d(fpsData?['onePercentLowFps']) ?? onePercentLowFps,
+          onePercentLowFps ?? _d(fpsData?['onePercentLowFps']),
       pointOnePercentLowFps:
-          _d(fpsData?['pointOnePercentLowFps']) ?? pointOnePercentLowFps,
-      frameTimeMs: _d(fpsData?['frameTimeMs']) ?? frameTimeMs,
+          pointOnePercentLowFps ?? _d(fpsData?['pointOnePercentLowFps']),
+      frameTimeMs: frameTimeMs ?? _d(fpsData?['frameTimeMs']),
       frameTimeP95Ms:
-          _d(fpsData?['frameTimeP95Ms']) ?? frameTimeP95Ms,
+          frameTimeP95Ms ?? _d(fpsData?['frameTimeP95Ms']),
       frameTimeP99Ms:
-          _d(fpsData?['frameTimeP99Ms']) ?? frameTimeP99Ms,
-      totalFrames: _i(fpsData?['totalFrames']) ?? totalFrames,
+          frameTimeP99Ms ?? _d(fpsData?['frameTimeP99Ms']),
+      totalFrames: totalFrames ?? _i(fpsData?['totalFrames']),
+      frameWindowFrames: frameWindowFrames ?? _i(fpsData?['frameWindowFrames']),
       cpuUsage: cpuUsage,
       cpuFrequencyMhz: cpuFrequencyMhz,
       cpuFrequencyMinMhz: cpuFrequencyMinMhz,
@@ -220,15 +245,13 @@ class TelemetrySample {
       appRamMb: appRamMb,
       appRssMb: appRssMb,
       socTemperatureC: socTemperatureC,
-      gpuModel: (gpuData?['model'] as String?)?.trim().isNotEmpty == true
-          ? gpuData!['model'] as String
-          : gpuModel,
+      gpuModel: gpuModel ?? _s(gpuData?['model']),
       gpuSource: gpuSource,
       gpuFrequencyMhz:
-          _d(gpuData?['frequencyMhz']) ?? gpuFrequencyMhz,
+          gpuFrequencyMhz ?? _d(gpuData?['frequencyMhz']),
       gpuFrequencyMaxMhz:
-          _d(gpuData?['maxFrequencyMhz']) ?? gpuFrequencyMaxMhz,
-      gpuLoad: _d(gpuData?['loadPercent']) ?? gpuLoad,
+          gpuFrequencyMaxMhz ?? _d(gpuData?['maxFrequencyMhz']),
+      gpuLoad: gpuLoad ?? _d(gpuData?['loadPercent']),
       ramUsedMb: ramUsedMb,
       ramTotalMb: ramTotalMb,
       batteryLevel: batteryLevel,
@@ -266,6 +289,7 @@ class TelemetrySample {
         'frameTimeP95Ms': frameTimeP95Ms,
         'frameTimeP99Ms': frameTimeP99Ms,
         'totalFrames': totalFrames,
+        'frameWindowFrames': frameWindowFrames,
         'cpuUsage': cpuUsage,
         'cpuFrequencyMhz': cpuFrequencyMhz,
         'cpuFrequencyMinMhz': cpuFrequencyMinMhz,
