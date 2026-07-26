@@ -13,3 +13,7 @@ rust/target/
 *.keystore
 .env
 .DS_Store
+keystore-base64.txt
+release-secrets.txt
+*.p12
+*.pfx

@@ -1,0 +1,287 @@
+name: Stable Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Stable version without v, for example 1.2.4"
+        required: true
+        type: string
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  release:
+    name: Build and publish stable release
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      FPSWATCHER_KEYSTORE_PATH: ${{ github.workspace }}/.release/fpswatcher-release.jks
+      FPSWATCHER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      FPSWATCHER_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      FPSWATCHER_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate version
+        id: version
+        shell: bash
+        env:
+          MANUAL_VERSION: ${{ inputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ "${GITHUB_REF_NAME}" != "${DEFAULT_BRANCH}" ]]; then
+              echo "Manual stable releases must run from the default branch: ${DEFAULT_BRANCH}" >&2
+              exit 1
+            fi
+            VERSION="${MANUAL_VERSION}"
+            TAG="v${VERSION}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+            VERSION="${TAG#v}"
+          fi
+
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Stable version must use x.y.z format, received: ${VERSION}" >&2
+            exit 1
+          fi
+
+          PUBSPEC_VERSION="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' pubspec.yaml | head -n 1)"
+          if [[ "${PUBSPEC_VERSION}" != "${VERSION}" ]]; then
+            echo "pubspec.yaml version (${PUBSPEC_VERSION}) does not match release version (${VERSION})." >&2
+            exit 1
+          fi
+
+          if ! grep -q "^## ${VERSION}$" CHANGELOG.md; then
+            echo "CHANGELOG.md does not contain a section for ${VERSION}." >&2
+            exit 1
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "GitHub Release ${TAG} already exists." >&2
+            exit 1
+          fi
+
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Validate signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            ANDROID_KEYSTORE_BASE64 \
+            FPSWATCHER_KEYSTORE_PASSWORD \
+            FPSWATCHER_KEY_ALIAS \
+            FPSWATCHER_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required GitHub Actions secret: ${name}" >&2
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Restore release keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${FPSWATCHER_KEYSTORE_PATH}")"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${FPSWATCHER_KEYSTORE_PATH}"
+          chmod 600 "${FPSWATCHER_KEYSTORE_PATH}"
+          keytool -list \
+            -keystore "${FPSWATCHER_KEYSTORE_PATH}" \
+            -storepass "${FPSWATCHER_KEYSTORE_PASSWORD}" \
+            -alias "${FPSWATCHER_KEY_ALIAS}" >/dev/null
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.7"
+          channel: stable
+          cache: true
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Cache Cargo data
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-ndk
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          key: cargo-ndk-4.1.2-${{ runner.os }}-${{ hashFiles('rust/Cargo.toml') }}
+          restore-keys: |
+            cargo-ndk-4.1.2-${{ runner.os }}-
+
+      - name: Install cargo-ndk
+        shell: bash
+        run: |
+          if ! command -v cargo-ndk >/dev/null 2>&1; then
+            cargo install cargo-ndk --version 4.1.2 --locked
+          fi
+
+      - name: Generate Android host
+        run: bash ./tool/bootstrap_android.sh
+
+      - name: Fetch Flutter packages
+        run: flutter pub get
+
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
+
+      - name: Test Rust core
+        run: cargo test --manifest-path rust/Cargo.toml
+
+      - name: Build Rust Android libraries
+        run: bash ./tool/build_rust.sh
+
+      - name: Analyze Flutter
+        run: flutter analyze --fatal-infos --fatal-warnings
+
+      - name: Run Flutter tests
+        run: flutter test
+
+      - name: Build signed release packages
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist
+
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "dist/FPSWatcher-v${VERSION}-universal.apk"
+
+          flutter build apk --release --split-per-abi
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            "dist/FPSWatcher-v${VERSION}-arm64-v8a.apk"
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+            "dist/FPSWatcher-v${VERSION}-armeabi-v7a.apk"
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk \
+            "dist/FPSWatcher-v${VERSION}-x86_64.apk"
+
+          flutter build appbundle --release
+          cp build/app/outputs/bundle/release/app-release.aab \
+            "dist/FPSWatcher-v${VERSION}.aab"
+
+      - name: Verify package signatures
+        shell: bash
+        run: |
+          set -euo pipefail
+          APKSIGNER="$(find "${ANDROID_SDK_ROOT}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          if [[ -z "${APKSIGNER}" ]]; then
+            echo "apksigner was not found." >&2
+            exit 1
+          fi
+
+          for apk in dist/*.apk; do
+            "${APKSIGNER}" verify --verbose --print-certs "${apk}"
+          done
+
+          jarsigner -verify -strict "dist/FPSWatcher-v${{ steps.version.outputs.version }}.aab"
+
+      - name: Create checksums and release notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          (
+            cd dist
+            sha256sum ./*.apk ./*.aab > SHA256SUMS.txt
+          )
+
+          {
+            echo "# FPSWatcher v${VERSION}"
+            echo
+            awk -v version="${VERSION}" '
+              $0 == "## " version { capture=1; next }
+              capture && /^## / { exit }
+              capture { print }
+            ' CHANGELOG.md
+            echo
+            echo "## Files"
+            echo
+            echo "- Universal APK: suitable for normal sideload installation."
+            echo "- arm64-v8a APK: recommended for modern Android phones."
+            echo "- AAB: intended for Google Play Console uploads."
+            echo "- SHA256SUMS.txt: file integrity hashes."
+          } > dist/RELEASE_NOTES.md
+
+      - name: Attest release binaries
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.apk
+            dist/*.aab
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: FPSWatcher-v${{ steps.version.outputs.version }}-stable
+          path: |
+            dist/*.apk
+            dist/*.aab
+            dist/SHA256SUMS.txt
+            dist/RELEASE_NOTES.md
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          target_args=()
+          if ! git rev-parse --verify --quiet "refs/tags/${TAG}" >/dev/null; then
+            target_args+=(--target "${GITHUB_SHA}")
+          fi
+
+          gh release create "${TAG}" \
+            dist/*.apk \
+            dist/*.aab \
+            dist/SHA256SUMS.txt \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "FPSWatcher v${VERSION}" \
+            --notes-file dist/RELEASE_NOTES.md \
+            --latest \
+            "${target_args[@]}"

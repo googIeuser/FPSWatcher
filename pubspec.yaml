@@ -1,7 +1,7 @@
 name: fps_watcher
 description: Android game telemetry monitor with Shizuku and Root backends.
 publish_to: none
-version: 1.2.3+123
+version: 1.2.4+124
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

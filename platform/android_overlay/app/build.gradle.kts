@@ -28,9 +28,36 @@ android {
         versionName = flutter.versionName
     }
 
+    val releaseKeystorePath = System.getenv("FPSWATCHER_KEYSTORE_PATH")
+    val releaseKeystorePassword = System.getenv("FPSWATCHER_KEYSTORE_PASSWORD")
+    val releaseKeyAlias = System.getenv("FPSWATCHER_KEY_ALIAS")
+    val releaseKeyPassword = System.getenv("FPSWATCHER_KEY_PASSWORD")
+    val releaseSigningReady = listOf(
+        releaseKeystorePath,
+        releaseKeystorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword,
+    ).all { !it.isNullOrBlank() }
+
+    signingConfigs {
+        if (releaseSigningReady) {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             isMinifyEnabled = false
             isShrinkResources = false
         }
