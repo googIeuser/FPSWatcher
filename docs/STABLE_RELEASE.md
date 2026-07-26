@@ -7,9 +7,9 @@ The stable release workflow signs every version with the same Android release ke
 Create a release keystore once, Base64-encode it, then add these repository Actions secrets:
 
 - `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_KEY_PASSWORD`
+- `FPSWATCHER_KEYSTORE_PASSWORD`
+- `FPSWATCHER_KEY_ALIAS`
+- `FPSWATCHER_KEY_PASSWORD`
 
 Never commit the keystore or its passwords.
 

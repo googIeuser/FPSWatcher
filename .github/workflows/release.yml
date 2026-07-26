@@ -29,9 +29,9 @@ jobs:
 
     env:
       FPSWATCHER_KEYSTORE_PATH: ${{ github.workspace }}/.release/fpswatcher-release.jks
-      FPSWATCHER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      FPSWATCHER_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      FPSWATCHER_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      FPSWATCHER_KEYSTORE_PASSWORD: ${{ secrets.FPSWATCHER_KEYSTORE_PASSWORD }}
+      FPSWATCHER_KEY_ALIAS: ${{ secrets.FPSWATCHER_KEY_ALIAS }}
+      FPSWATCHER_KEY_PASSWORD: ${{ secrets.FPSWATCHER_KEY_PASSWORD }}
       ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       GH_TOKEN: ${{ github.token }}
 

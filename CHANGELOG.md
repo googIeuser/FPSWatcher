@@ -2,6 +2,7 @@
 
 ## 1.2.4
 
+- Fixed stable-release secret mapping so the workflow reads the documented `FPSWATCHER_*` repository secrets.
 - Added separate CI and stable release GitHub Actions workflows.
 - Stable releases now use a persistent Android signing key stored through GitHub Actions secrets instead of the debug key.
 - Added automatic version/changelog validation, signature verification, universal and split APK builds, Play Store AAB output, SHA-256 checksums and build provenance attestations.
