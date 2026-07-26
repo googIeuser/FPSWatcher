@@ -27,7 +27,3 @@ Shizuku can read only what Android's shell user is permitted to read. Root check
 ## Overlay
 
 The native overlay has square corners, background-only opacity, selectable text size/color/padding/refresh rate, per-metric visibility, an in-app preview and a remembered on-screen position. It does not display the backend name.
-
-## Stable GitHub releases
-
-`.github/workflows/ci.yml` verifies pushes and pull requests. `.github/workflows/release.yml` publishes persistently signed APK/AAB files when run manually or when a `vX.Y.Z` tag is pushed. See [`docs/STABLE_RELEASE.md`](docs/STABLE_RELEASE.md) for signing-secret setup.
