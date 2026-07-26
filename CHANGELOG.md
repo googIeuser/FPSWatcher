@@ -2,6 +2,7 @@
 
 ## 1.2.4
 
+- Fixed AAB signature verification: self-signed Android release certificates are accepted while the JAR signature and embedded certificate are still validated.
 - Fixed stable-release secret mapping so the workflow reads the documented `FPSWATCHER_*` repository secrets.
 - Added separate CI and stable release GitHub Actions workflows.
 - Stable releases now use a persistent Android signing key stored through GitHub Actions secrets instead of the debug key.

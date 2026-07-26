@@ -214,7 +214,9 @@ jobs:
             "${APKSIGNER}" verify --verbose --print-certs "${apk}"
           done
 
-          jarsigner -verify -strict "dist/FPSWatcher-v${{ steps.version.outputs.version }}.aab"
+          AAB="dist/FPSWatcher-v${{ steps.version.outputs.version }}.aab"
+          jarsigner -verify -verbose -certs "${AAB}"
+          keytool -printcert -jarfile "${AAB}" >/dev/null
 
       - name: Create checksums and release notes
         shell: bash
