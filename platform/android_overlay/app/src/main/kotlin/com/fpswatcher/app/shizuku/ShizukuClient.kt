@@ -12,13 +12,15 @@ import rikka.shizuku.Shizuku
 object ShizukuClient {
     private const val REQUEST_CODE = 4317
     private const val BIND_TIMEOUT_MS = 2_500L
-    private const val HEALTH_CACHE_MS = 5_000L
+    private const val HEALTH_CACHE_MS = 1_000L
 
     @Volatile private var service: IPrivilegedService? = null
     @Volatile private var initialized = false
     @Volatile private var binding = false
     @Volatile private var lastHealthCheckMs = 0L
     @Volatile private var lastHealthResult = false
+    @Volatile var lastError: String? = null
+        private set
     private val serviceLock = Object()
     private lateinit var applicationContext: Context
 
@@ -27,8 +29,8 @@ object ShizukuClient {
             ComponentName(applicationContext, PrivilegedService::class.java),
         )
             .daemon(false)
-            .tag("fpswatcher-privileged-v2")
-            .version(2)
+            .tag("fpswatcher-privileged-v3")
+            .version(3)
             .debuggable(BuildConfig.DEBUG)
             .processNameSuffix("fpswatcher")
     }
@@ -36,8 +38,9 @@ object ShizukuClient {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             synchronized(serviceLock) {
-                service = IPrivilegedService.Stub.asInterface(binder)
+                service = binder?.let(IPrivilegedService.Stub::asInterface)
                 binding = false
+                lastError = if (service == null) "Shizuku returned an empty UserService binder" else null
                 lastHealthCheckMs = 0L
                 serviceLock.notifyAll()
             }
@@ -101,6 +104,10 @@ object ShizukuClient {
         if (!hasPermission()) {
             Shizuku.requestPermission(REQUEST_CODE)
         } else {
+            synchronized(serviceLock) {
+                if (service == null) binding = false
+                lastHealthCheckMs = 0L
+            }
             bindIfPossible()
         }
     }
@@ -111,7 +118,8 @@ object ShizukuClient {
             if (service != null || binding) return
             binding = true
             runCatching { Shizuku.bindUserService(userServiceArgs, serviceConnection) }
-                .onFailure {
+                .onFailure { error ->
+                    lastError = error.message ?: error.javaClass.simpleName
                     binding = false
                     serviceLock.notifyAll()
                 }
@@ -129,15 +137,24 @@ object ShizukuClient {
                 if (remaining <= 0L) break
                 runCatching { serviceLock.wait(remaining) }
             }
+            if (service == null) {
+                binding = false
+                lastError = "Shizuku UserService bind timed out"
+            }
             return service
         }
     }
 
     fun execute(command: String): String? {
         if (!hasPermission()) return null
-        val remote = awaitService() ?: return null
+        val remote = awaitService() ?: run {
+            lastError = "UserService did not connect"
+            return null
+        }
         return runCatching { remote.execute(command) }
-            .onFailure {
+            .onSuccess { lastError = null }
+            .onFailure { error ->
+                lastError = error.message ?: error.javaClass.simpleName
                 synchronized(serviceLock) {
                     service = null
                     binding = false

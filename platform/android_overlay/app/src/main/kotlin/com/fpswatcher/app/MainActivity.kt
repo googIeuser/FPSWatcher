@@ -82,6 +82,11 @@ class MainActivity : FlutterActivity() {
                 result.success(null)
             }
 
+            "requestRootPermission" -> executor.execute {
+                val granted = RootShell.requestAccess()
+                runOnUiThread { result.success(granted) }
+            }
+
             "requestShizukuPermission" -> {
                 ShizukuClient.requestPermission()
                 result.success(null)

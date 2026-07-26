@@ -58,13 +58,13 @@ class SettingsPage extends StatelessWidget {
                 Text('Live UI interval', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 6),
                 Text(
-                  'Lightweight Android counters refresh at this interval. Privileged FPS, process and GPU probes are throttled to 250 ms to avoid affecting the game.',
+                  'Lightweight Android counters refresh at this interval. CPU, GPU, power and process probes refresh near 200 ms. Frame statistics use a separate 1 second window so FPS and low-percentile values remain meaningful.',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white54),
                 ),
                 const SizedBox(height: 12),
                 SegmentedButton<int>(
                   segments: const [
-                    ButtonSegment(value: 250, label: Text('250 ms')),
+                    ButtonSegment(value: 200, label: Text('200 ms')),
                     ButtonSegment(value: 500, label: Text('500 ms')),
                     ButtonSegment(value: 1000, label: Text('1 s')),
                   ],
@@ -101,12 +101,23 @@ class SettingsPage extends StatelessWidget {
           action: controller.requestNotificationPermission,
         ),
         _PermissionTile(
+          icon: Icons.security_outlined,
+          title: 'Root access',
+          subtitle: controller.rootAvailable
+              ? 'Root shell is operational.'
+              : controller.rootInstalled
+                  ? 'Root manager detected. Tap Grant and approve FPSWatcher in SukiSU / KernelSU / Magisk. ${controller.rootError ?? ''}'
+                  : 'No compatible su binary was detected. ${controller.rootError ?? ''}',
+          granted: controller.rootAvailable,
+          action: controller.requestRootPermission,
+        ),
+        _PermissionTile(
           icon: Icons.admin_panel_settings_outlined,
           title: 'Shizuku',
           subtitle: controller.shizukuOperational
               ? 'UserService connected · UID ${controller.shizukuUid}.'
               : controller.shizukuPermission
-                  ? 'Permission granted, but UserService is not responding. Tap to reconnect.'
+                  ? 'Permission granted, but UserService is not responding. Tap to reconnect. ${controller.shizukuError ?? ''}'
                   : controller.shizukuAvailable
                       ? 'Shizuku is running. Permission is required.'
                       : 'Shizuku is not running or not installed.',

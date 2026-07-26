@@ -134,7 +134,7 @@ class OverlayService : Service() {
                         }
                     }
                 }
-                handler.postDelayed(this, 250L)
+                handler.postDelayed(this, 200L)
             }
         }, 100L)
     }
@@ -161,8 +161,10 @@ class OverlayService : Service() {
         val power = decimal2(data["batteryPowerW"])
         val temp = decimal(data["batteryTemperatureC"])
         val access = (data["accessModeUsed"] as? String)?.uppercase(Locale.US) ?: "STANDARD"
+        val requested = (data["accessModeRequested"] as? String)?.uppercase(Locale.US) ?: "AUTO"
+        val accessLabel = if (access == "STANDARD" && requested != "STANDARD") "$access!" else access
         overlayView?.text = buildString {
-            append("FPS $fps  1% $low1  0.1% $low01  $access")
+            append("FPS $fps  1% $low1  0.1% $low01  $accessLabel")
             append("\nFRAME $frame ms")
             append("\nCPU $cpu%  $cpuFreq MHz  APP $appCpu%")
             append("\nGPU $gpuLoad%  $gpuFreq MHz  RAM $appRam MB")

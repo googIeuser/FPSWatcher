@@ -17,7 +17,10 @@ class TelemetrySample {
     required this.timestamp,
     this.sampleIntervalMs,
     this.foregroundPackage,
+    this.accessModeRequested = 'auto',
     this.accessModeUsed = 'standard',
+    this.backendOperational = true,
+    this.backendError,
     this.fpsSource,
     this.fps,
     this.onePercentLowFps,
@@ -65,7 +68,10 @@ class TelemetrySample {
   final DateTime timestamp;
   final int? sampleIntervalMs;
   final String? foregroundPackage;
+  final String accessModeRequested;
   final String accessModeUsed;
+  final bool backendOperational;
+  final String? backendError;
   final String? fpsSource;
   final double? fps;
   final double? onePercentLowFps;
@@ -128,7 +134,10 @@ class TelemetrySample {
           : DateTime.now(),
       sampleIntervalMs: _i(source['sampleIntervalMs']),
       foregroundPackage: source['foregroundPackage'] as String?,
+      accessModeRequested: (source['accessModeRequested'] as String?) ?? 'auto',
       accessModeUsed: (source['accessModeUsed'] as String?) ?? 'standard',
+      backendOperational: source['backendOperational'] != false,
+      backendError: source['backendError'] as String?,
       fpsSource: source['fpsSource'] as String?,
       fps: _d(source['fps']),
       onePercentLowFps: _d(source['onePercentLowFps']) ?? _d(source['p99Fps']),
@@ -186,7 +195,10 @@ class TelemetrySample {
       timestamp: timestamp,
       sampleIntervalMs: sampleIntervalMs,
       foregroundPackage: foregroundPackage,
+      accessModeRequested: accessModeRequested,
       accessModeUsed: accessModeUsed,
+      backendOperational: backendOperational,
+      backendError: backendError,
       fpsSource: (fpsData?['source'] as String?) ?? fpsSource,
       fps: _d(fpsData?['averageFps']) ?? fps,
       onePercentLowFps:
@@ -244,7 +256,10 @@ class TelemetrySample {
         'timestamp': timestamp.toIso8601String(),
         'sampleIntervalMs': sampleIntervalMs,
         'foregroundPackage': foregroundPackage,
+        'accessModeRequested': accessModeRequested,
         'accessMode': accessModeUsed,
+        'backendOperational': backendOperational,
+        'backendError': backendError,
         'fpsSource': fpsSource,
         'fps': fps,
         'onePercentLowFps': onePercentLowFps,

@@ -48,6 +48,7 @@ class TelemetryCollector(context: Context) {
     private var lastPrivilegedPollMs = 0L
     private var lastPrivilegedBackend = ""
     private var lastPrivilegedPackage = ""
+    private var lastFramePollMs = 0L
     private val cachedGpuModel: String? by lazy<String?> {
         runCatching { GpuProbe.renderer() }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
     }
@@ -98,11 +99,21 @@ class TelemetryCollector(context: Context) {
                 .onFailure { error -> warnings += "$label: ${error.javaClass.simpleName}" }
         }
 
-        val backend = runCatching { privilegedExecutor(mode) }
+        val requestedMode = mode.lowercase().takeIf { it in setOf("auto", "standard", "shizuku", "root") } ?: "auto"
+        result["accessModeRequested"] = requestedMode
+        val backend = runCatching { privilegedExecutor(requestedMode) }
             .onFailure { warnings += "backend: ${it.javaClass.simpleName}" }
             .getOrNull()
         result["accessModeUsed"] = backend?.name ?: "standard"
-        result["backendOperational"] = backend != null || mode.equals("standard", ignoreCase = true)
+        result["backendOperational"] = backend != null || requestedMode == "standard"
+        if (backend == null && requestedMode != "standard") {
+            result["backendError"] = when (requestedMode) {
+                "root" -> RootShell.lastError ?: "Root command unavailable or denied"
+                "shizuku" -> ShizukuClient.lastError ?: "Shizuku UserService unavailable"
+                else -> listOfNotNull(RootShell.lastError, ShizukuClient.lastError).joinToString("; ")
+                    .ifBlank { "No privileged backend is operational" }
+            }
+        }
 
         val shouldRefreshForeground =
             elapsedNow - lastForegroundPollMs >= FOREGROUND_POLL_MS || cachedForegroundPackage == null
@@ -157,41 +168,48 @@ class TelemetryCollector(context: Context) {
                 elapsedNow - lastPrivilegedPollMs >= PRIVILEGED_POLL_MS || cachedPrivileged.isEmpty()
 
             if (needsPrivilegedPoll) {
-                val fresh = hashMapOf<String, Any?>()
-
-                backend.execute(privilegedSystemCommand(packageName))
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { raw ->
-                        runCatching { applyPrivilegedSystemMetrics(raw, fresh) }
-                            .onFailure { warnings += "privilegedSystem: ${it.javaClass.simpleName}" }
-                    }
-
-                if (!surfaceFlingerEnabled.get()) {
-                    val enabled = backend.execute(
-                        "dumpsys SurfaceFlinger --timestats -clear -enable >/dev/null 2>&1; echo FPSWATCHER_OK",
-                    )?.contains("FPSWATCHER_OK") == true
-                    if (enabled) surfaceFlingerEnabled.set(true)
-                }
-                if (packageName.isNotBlank()) {
-                    val frameRaw = backend.execute(frameStatsCommand(packageName)).orEmpty()
-                    if (frameRaw.isNotBlank()) {
-                        fresh["surfaceFlingerRaw"] = frameRaw
-                        runCatching { applyFrameMetrics(frameRaw, fresh) }
-                            .onFailure { warnings += "frameStats: ${it.javaClass.simpleName}" }
-                    }
+                val fresh = if (backendChanged || packageChanged) {
+                    hashMapOf<String, Any?>()
+                } else {
+                    hashMapOf<String, Any?>().apply { putAll(cachedPrivileged) }
                 }
 
-                val privilegedGpu = backend.execute(PRIVILEGED_GPU_COMMAND).orEmpty()
-                val combinedGpu = listOf(cachedLocalGpuRaw, privilegedGpu)
-                    .filter { it.isNotBlank() }
-                    .joinToString("\n")
-                if (combinedGpu.isNotBlank()) {
+                val combinedRaw = backend.execute(
+                    privilegedSystemCommand(packageName) +
+                        "\necho __FPSWATCHER_GPU_BEGIN__\n" + PRIVILEGED_GPU_COMMAND,
+                ).orEmpty()
+                if (combinedRaw.isNotBlank()) {
+                    runCatching { applyPrivilegedSystemMetrics(combinedRaw, fresh) }
+                        .onFailure { warnings += "privilegedSystem: ${it.javaClass.simpleName}" }
+                    val combinedGpu = listOf(cachedLocalGpuRaw, combinedRaw)
+                        .filter { it.isNotBlank() }
+                        .joinToString("\n")
                     fresh["gpuRaw"] = combinedGpu
                     runCatching { applyGpuMetrics(combinedGpu, fresh) }
                         .onFailure { warnings += "privilegedGpu: ${it.javaClass.simpleName}" }
                     if (fresh["gpuLoad"] != null || fresh["gpuFrequencyMhz"] != null) {
                         fresh["gpuSource"] = backend.name
                     }
+                } else {
+                    warnings += "backendExecute: empty"
+                }
+
+                val frameDue = packageChanged || elapsedNow - lastFramePollMs >= FRAME_POLL_MS
+                if (!surfaceFlingerEnabled.get()) {
+                    val enabled = backend.execute(
+                        "dumpsys SurfaceFlinger --timestats -clear -enable >/dev/null 2>&1; echo FPSWATCHER_OK",
+                    )?.contains("FPSWATCHER_OK") == true
+                    if (enabled) surfaceFlingerEnabled.set(true)
+                }
+                if (frameDue && packageName.isNotBlank()) {
+                    FRAME_KEYS.forEach { key -> fresh.remove(key) }
+                    val frameRaw = backend.execute(frameStatsCommand(packageName)).orEmpty()
+                    if (frameRaw.isNotBlank()) {
+                        fresh["surfaceFlingerRaw"] = frameRaw
+                        runCatching { applyFrameMetrics(frameRaw, fresh) }
+                            .onFailure { warnings += "frameStats: ${it.javaClass.simpleName}" }
+                    }
+                    lastFramePollMs = elapsedNow
                 }
 
                 cachedPrivileged.clear()
@@ -231,6 +249,8 @@ class TelemetryCollector(context: Context) {
             "shizukuUid" to runCatching { ShizukuClient.uid() }.getOrDefault(-1),
             "rootInstalled" to rootInstalled,
             "rootAvailable" to rootOperational,
+            "rootError" to RootShell.lastError,
+            "shizukuError" to ShizukuClient.lastError,
             "overlayRunning" to OverlayService.isOverlayVisible,
             "monitorServiceRunning" to OverlayService.isRunning,
             "recording" to NativeSessionStore.isRecording,
@@ -331,7 +351,7 @@ class TelemetryCollector(context: Context) {
             status == BatteryManager.BATTERY_STATUS_FULL
         val voltageMv = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0)?.takeIf { it > 0 }
         val currentUa = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
-            .takeIf { it != Int.MIN_VALUE && it != 0 }
+            .takeIf { it != Int.MIN_VALUE && kotlin.math.abs(it) >= 1_000 }
         val signedPower: Double? = if (voltageMv != null && currentUa != null) {
             currentUa.toDouble() / 1_000_000.0 * voltageMv.toDouble() / 1000.0
         } else null
@@ -341,8 +361,8 @@ class TelemetryCollector(context: Context) {
                 ?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
                 ?.takeIf { it != Int.MIN_VALUE }
                 ?.div(10.0),
-            "batteryPowerW" to signedPower?.let { abs(it) },
-            "batteryPowerSource" to signedPower?.let { "android-api" },
+            "batteryPowerW" to signedPower?.let { abs(it) }?.takeIf { it in 0.05..100.0 },
+            "batteryPowerSource" to signedPower?.let { abs(it) }?.takeIf { it in 0.05..100.0 }?.let { "android-api" },
             "batteryCharging" to charging,
             "batteryCurrentMa" to currentUa?.div(1000.0),
             "batteryVoltageV" to voltageMv?.div(1000.0),
@@ -808,9 +828,15 @@ class TelemetryCollector(context: Context) {
     """.trimIndent()
 
     companion object {
-        private const val FOREGROUND_POLL_MS = 250L
-        private const val LOCAL_GPU_POLL_MS = 250L
-        private const val PRIVILEGED_POLL_MS = 250L
+        private const val FOREGROUND_POLL_MS = 200L
+        private const val LOCAL_GPU_POLL_MS = 200L
+        private const val PRIVILEGED_POLL_MS = 200L
+        private const val FRAME_POLL_MS = 1_000L
+        private val FRAME_KEYS = setOf(
+            "surfaceFlingerRaw", "fpsSource", "fps", "onePercentLowFps",
+            "pointOnePercentLowFps", "frameTimeMs", "frameTimeP95Ms",
+            "frameTimeP99Ms", "totalFrames",
+        )
         private val PACKAGE_NAME = Regex("^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)+$")
         private val FREQUENCY_NAMES = listOf(
             "gpuclk", "cur_freq", "clock", "scaling_cur_freq", "devfreq/cur_freq", "current_freqency",
@@ -886,45 +912,92 @@ class TelemetryCollector(context: Context) {
 object RootShell {
     @Volatile private var cachedAvailable = false
     @Volatile private var lastCheckMs = 0L
+    @Volatile var lastError: String? = null
+        private set
     private val ioExecutor = Executors.newCachedThreadPool()
 
+    private fun candidates(): List<String> = buildList {
+        listOf(
+            "/system/bin/su",
+            "/system/xbin/su",
+            "/sbin/su",
+            "/debug_ramdisk/su",
+            "/data/adb/ap/bin/su",
+        ).filterTo(this) { File(it).exists() }
+        add("su")
+    }.distinct()
+
     fun isInstalled(): Boolean {
-        val knownPaths = arrayOf(
-            "/system/bin/su", "/system/xbin/su", "/sbin/su", "/debug_ramdisk/su",
-            "/data/adb/ksud", "/data/adb/ap/bin/su",
-        )
-        if (knownPaths.any { File(it).exists() }) return true
+        if (candidates().any { it != "su" }) return true
         return System.getenv("PATH").orEmpty().split(':').any { directory ->
             directory.isNotBlank() && File(directory, "su").exists()
         }
     }
 
-    fun isAvailable(): Boolean {
+    fun requestAccess(): Boolean {
+        lastCheckMs = 0L
+        cachedAvailable = false
+        val result = runSu("id", 20)
+        cachedAvailable = result?.let { (finished, output) ->
+            finished && output.contains("uid=0")
+        } ?: false
+        lastCheckMs = System.currentTimeMillis()
+        if (cachedAvailable) lastError = null
+        return cachedAvailable
+    }
+
+    fun isAvailable(force: Boolean = false): Boolean {
         val now = System.currentTimeMillis()
-        if (now - lastCheckMs < 5_000L) return cachedAvailable
+        if (!force && now - lastCheckMs < 1_500L) return cachedAvailable
         synchronized(this) {
             val current = System.currentTimeMillis()
-            if (current - lastCheckMs < 5_000L) return cachedAvailable
-            cachedAvailable = runSu("id", 4)?.let { (finished, output) ->
+            if (!force && current - lastCheckMs < 1_500L) return cachedAvailable
+            val result = runSu("id", if (force) 15 else 5)
+            cachedAvailable = result?.let { (finished, output) ->
                 finished && output.contains("uid=0")
             } ?: false
             lastCheckMs = current
+            if (cachedAvailable) lastError = null
             return cachedAvailable
         }
     }
 
-    fun execute(command: String): String? = runSu(command, 15)?.takeIf { it.first }?.second
+    fun execute(command: String): String? {
+        if (!isAvailable()) return null
+        val result = runSu(command, 15) ?: return null
+        return result.takeIf { it.first }?.second
+    }
 
-    private fun runSu(command: String, timeoutSeconds: Long): Pair<Boolean, String>? = runCatching {
-        val process = ProcessBuilder("su", "-c", command)
-            .redirectErrorStream(true)
-            .start()
-        val outputFuture = ioExecutor.submit<String> {
-            process.inputStream.bufferedReader().use { it.readText() }
+    private fun runSu(command: String, timeoutSeconds: Long): Pair<Boolean, String>? {
+        var latestError: String? = null
+        for (binary in candidates()) {
+            val attempt = runCatching {
+                val process = ProcessBuilder(binary, "-c", command)
+                    .redirectErrorStream(true)
+                    .start()
+                val outputFuture = ioExecutor.submit<String> {
+                    process.inputStream.bufferedReader().use { it.readText() }
+                }
+                val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
+                if (!finished) process.destroyForcibly()
+                val output = runCatching { outputFuture.get(2, TimeUnit.SECONDS) }.getOrDefault("")
+                if (!finished) {
+                    latestError = "Root command timed out"
+                } else if (output.contains("denied", ignoreCase = true) ||
+                    output.contains("not allowed", ignoreCase = true)) {
+                    latestError = output.trim().take(180).ifBlank { "Root access denied" }
+                }
+                finished to output
+            }.onFailure { error ->
+                latestError = error.message ?: error.javaClass.simpleName
+            }.getOrNull()
+            if (attempt != null && (attempt.second.contains("uid=0") || command != "id")) {
+                lastError = null
+                return attempt
+            }
         }
-        val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
-        if (!finished) process.destroyForcibly()
-        val output = runCatching { outputFuture.get(2, TimeUnit.SECONDS) }.getOrDefault("")
-        finished to output
-    }.getOrNull()
+        lastError = latestError ?: "su executable was not found or permission was denied"
+        return null
+    }
 }
+

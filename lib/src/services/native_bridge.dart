@@ -22,6 +22,8 @@ class NativeBridge {
       _channel.invokeMethod('openOverlaySettings');
   Future<void> requestNotificationPermission() =>
       _channel.invokeMethod('requestNotificationPermission');
+  Future<bool> requestRootPermission() async =>
+      (await _channel.invokeMethod<bool>('requestRootPermission')) ?? false;
   Future<void> requestShizukuPermission() =>
       _channel.invokeMethod('requestShizukuPermission');
   Future<void> openShizuku() => _channel.invokeMethod('openShizuku');

@@ -83,6 +83,32 @@ class _DashboardPageState extends State<DashboardPage> {
               _ModeSelector(controller: controller),
               const SizedBox(height: 14),
               _StatusStrip(controller: controller),
+              if (sample != null &&
+                  sample.accessModeRequested != 'standard' &&
+                  sample.accessModeUsed == 'standard') ...[
+                const SizedBox(height: 12),
+                Card(
+                  color: const Color(0xFF3A1D24),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: Color(0xFFFF9BAE)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Privileged telemetry is not active. ${sample.backendError ?? 'Open Settings and grant Root or reconnect Shizuku.'}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: const Color(0xFFFFC3CE),
+                                  height: 1.35,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 18),
               _FpsHero(sample: sample, history: fpsHistory),
               const SizedBox(height: 14),

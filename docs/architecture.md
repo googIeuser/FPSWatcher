@@ -5,7 +5,7 @@
 ### Flutter UI (`lib/`)
 
 - Material 3 dashboard, session recorder, access settings and export controls.
-- 250 ms live refresh by default, selectable as 250/500/1000 ms.
+- 200 ms live refresh by default, selectable as 200/500/1000 ms.
 - Android MethodChannel bridge for telemetry, permissions, overlay control, native recording and Storage Access Framework exports.
 - Rust FFI loader with Dart fallbacks when the native library is unavailable.
 
@@ -23,13 +23,13 @@
 - EGL GPU renderer probe.
 - Shizuku UserService and AIDL command bridge.
 - SukiSU/KernelSU/Magisk-compatible root shell fallback.
-- Foreground monitor service, 250 ms draggable overlay and two-samples-per-second native session store.
-- Lightweight counters are collected every UI tick; privileged FPS/process/GPU probes are cached for 250 ms to limit overhead.
+- Foreground monitor service, 200 ms draggable overlay and two-samples-per-second native session store.
+- Lightweight counters are collected every UI tick; privileged FPS/process/GPU probes are cached for 200 ms, while frame statistics use a 1 second window to limit overhead.
 
 ## Recording flow
 
 1. Flutter requests `startRecording` with the selected access mode.
-2. The Kotlin foreground service starts and refreshes the overlay every 250 ms.
+2. The Kotlin foreground service starts and refreshes the overlay every 200 ms.
 3. A detailed recording sample is stored every 500 ms.
 4. Each sample is mirrored to a private JSON-lines recovery file while the bounded in-memory window is updated.
 5. The Flutter activity stops its own timer while backgrounded, avoiding duplicate telemetry queries during gameplay.

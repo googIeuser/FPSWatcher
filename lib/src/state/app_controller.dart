@@ -36,9 +36,11 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   bool rootInstalled = false;
   bool rootAvailable = false;
   int shizukuUid = -1;
+  String? rootError;
+  String? shizukuError;
   int pageIndex = 0;
   String? lastError;
-  int refreshIntervalMs = 250;
+  int refreshIntervalMs = 200;
 
   Future<void> initialize() async {
     WidgetsBinding.instance.addObserver(this);
@@ -79,6 +81,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       rootInstalled = status['rootInstalled'] == true;
       rootAvailable = status['rootAvailable'] == true;
       shizukuUid = (status['shizukuUid'] as num?)?.toInt() ?? -1;
+      rootError = status['rootError'] as String?;
+      shizukuError = status['shizukuError'] as String?;
       overlayRunning = status['overlayRunning'] == true;
       monitorServiceRunning = status['monitorServiceRunning'] == true;
       recorder.restoreState(
@@ -133,11 +137,17 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void setAccessMode(AccessMode mode) {
     accessMode = mode;
     notifyListeners();
-    unawaited(collectNow());
+    if (mode == AccessMode.root && !rootAvailable) {
+      unawaited(requestRootPermission());
+    } else if (mode == AccessMode.shizuku && !shizukuOperational) {
+      unawaited(requestShizukuPermission());
+    } else {
+      unawaited(collectNow());
+    }
   }
 
   void setRefreshInterval(int milliseconds) {
-    refreshIntervalMs = milliseconds.clamp(250, 1000).toInt();
+    refreshIntervalMs = milliseconds.clamp(200, 1000).toInt();
     _startTimer();
     notifyListeners();
   }
@@ -147,6 +157,22 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  Future<void> _ensurePrivilegedBackend() async {
+    if (accessMode == AccessMode.root && !rootAvailable) {
+      await requestRootPermission();
+    } else if (accessMode == AccessMode.shizuku && !shizukuOperational) {
+      await requestShizukuPermission();
+    } else if (accessMode == AccessMode.auto &&
+        !rootAvailable &&
+        !shizukuOperational) {
+      if (rootInstalled) {
+        await requestRootPermission();
+      } else if (shizukuAvailable) {
+        await requestShizukuPermission();
+      }
+    }
+  }
+
   Future<void> toggleRecording() async {
     try {
       if (recorder.isRecording) {
@@ -154,6 +180,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
         recorder.stop();
         await _syncRecordedSamples();
       } else {
+        await _ensurePrivilegedBackend();
         recorder.start();
         await nativeBridge.startRecording(accessMode.wireName);
         await _syncRecordedSamples(limit: 30);
@@ -190,6 +217,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       if (overlayRunning) {
         await nativeBridge.stopOverlay();
       } else {
+        await _ensurePrivilegedBackend();
         await nativeBridge.startOverlay(accessMode.wireName);
       }
       await Future<void>.delayed(const Duration(milliseconds: 150));
@@ -211,6 +239,18 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> requestNotificationPermission() async {
     await nativeBridge.requestNotificationPermission();
     await refreshStatus();
+  }
+
+  Future<void> requestRootPermission() async {
+    try {
+      await nativeBridge.requestRootPermission();
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      await refreshStatus();
+      await collectNow();
+    } catch (_) {
+      lastError = 'Root access request failed or was denied.';
+      notifyListeners();
+    }
   }
 
   Future<void> requestShizukuPermission() async {
