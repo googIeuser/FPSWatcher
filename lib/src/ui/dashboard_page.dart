@@ -83,9 +83,7 @@ class _DashboardPageState extends State<DashboardPage> {
               _ModeSelector(controller: controller),
               const SizedBox(height: 14),
               _StatusStrip(controller: controller),
-              if (sample != null &&
-                  sample.accessModeRequested != 'standard' &&
-                  sample.accessModeUsed == 'standard') ...[
+              if (sample != null && !sample.backendOperational) ...[
                 const SizedBox(height: 12),
                 Card(
                   color: const Color(0xFF3A1D24),
@@ -169,7 +167,7 @@ class _DashboardPageState extends State<DashboardPage> {
                         : '${_number(sample?.appCpuUsage, decimals: 1)}%',
                     subtitle: sample?.appPid == null
                         ? (sample?.foregroundPackage ?? 'Waiting for game process')
-                        : 'PID ${sample?.appPid} · ${sample?.accessModeUsed ?? 'standard'}',
+                        : 'PID ${sample?.appPid} · process telemetry',
                     icon: Icons.sports_esports_outlined,
                   ),
                   MetricCard(
@@ -389,8 +387,10 @@ class _StatusStrip extends StatelessWidget {
       runSpacing: 8,
       children: [
         _StatusChip(
-          label: 'Mode: ${controller.latest?.accessModeUsed ?? controller.accessMode.label}',
-          active: true,
+          label: 'Backend: ${controller.accessMode.label}',
+          active: controller.accessMode == AccessMode.root
+              ? controller.rootAvailable
+              : controller.shizukuOperational,
         ),
         _StatusChip(label: '${controller.refreshIntervalMs} ms', active: true),
         _StatusChip(label: 'Usage', active: controller.usageAccess),

@@ -1,7 +1,7 @@
 name: fps_watcher
-description: Rootless-first Android performance monitor with optional Shizuku and root backends.
+description: Android game telemetry monitor with Shizuku and Root backends.
 publish_to: none
-version: 1.1.1+111
+version: 1.2.0+120
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

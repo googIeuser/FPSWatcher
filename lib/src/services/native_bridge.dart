@@ -32,6 +32,19 @@ class NativeBridge {
       _channel.invokeMethod('startOverlay', {'mode': mode});
   Future<void> stopOverlay() => _channel.invokeMethod('stopOverlay');
 
+  Future<Map<dynamic, dynamic>> getOverlayPreferences() async {
+    return (await _channel.invokeMethod<Map<dynamic, dynamic>>(
+          'getOverlayPreferences',
+        )) ??
+        <dynamic, dynamic>{};
+  }
+
+  Future<void> setOverlayPreferences(Map<String, dynamic> preferences) =>
+      _channel.invokeMethod('setOverlayPreferences', preferences);
+
+  Future<void> resetOverlayPosition() =>
+      _channel.invokeMethod('resetOverlayPosition');
+
   Future<void> startRecording(String mode) =>
       _channel.invokeMethod('startRecording', {'mode': mode});
   Future<void> stopRecording() => _channel.invokeMethod('stopRecording');

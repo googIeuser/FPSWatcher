@@ -36,7 +36,7 @@ class MainActivity : FlutterActivity() {
     private fun handleCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "collectSnapshot" -> {
-                val mode = call.argument<String>("mode") ?: "auto"
+                val mode = call.argument<String>("mode") ?: "shizuku"
                 executor.execute {
                     runCatching { collector.collect(mode) }
                         .onSuccess { data -> runOnUiThread { result.success(data) } }
@@ -112,7 +112,7 @@ class MainActivity : FlutterActivity() {
                     )
                     return
                 }
-                val mode = call.argument<String>("mode") ?: "auto"
+                val mode = call.argument<String>("mode") ?: "shizuku"
                 startMonitorService(
                     Intent(this, OverlayService::class.java)
                         .putExtra(OverlayService.EXTRA_MODE, mode)
@@ -136,7 +136,7 @@ class MainActivity : FlutterActivity() {
             }
 
             "startRecording" -> {
-                val mode = call.argument<String>("mode") ?: "auto"
+                val mode = call.argument<String>("mode") ?: "shizuku"
                 NativeSessionStore.start()
                 startMonitorService(
                     Intent(this, OverlayService::class.java)
@@ -171,6 +171,28 @@ class MainActivity : FlutterActivity() {
                     )
                     runOnUiThread { result.success(batch) }
                 }
+            }
+
+            "getOverlayPreferences" -> {
+                result.success(OverlayPreferences.snapshot(applicationContext))
+            }
+
+            "setOverlayPreferences" -> {
+                @Suppress("UNCHECKED_CAST")
+                OverlayPreferences.update(applicationContext, call.arguments as? Map<*, *> ?: emptyMap<Any, Any>())
+                result.success(null)
+            }
+
+            "resetOverlayPosition" -> {
+                OverlayPreferences.resetPosition(applicationContext)
+                startMonitorService(
+                    Intent(this, OverlayService::class.java)
+                        .putExtra(
+                            OverlayService.EXTRA_OVERLAY_ACTION,
+                            OverlayService.OVERLAY_RESET_POSITION,
+                        ),
+                )
+                result.success(null)
             }
 
             "saveBytes" -> saveBytes(call, result)

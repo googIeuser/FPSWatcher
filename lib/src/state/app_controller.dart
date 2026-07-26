@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
+import '../models/overlay_preferences.dart';
 import '../models/telemetry_sample.dart';
 import '../services/native_bridge.dart';
 import '../services/rust_core.dart';
@@ -18,12 +19,14 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   final NativeBridge nativeBridge;
   late final SessionRecorder recorder;
 
-  AccessMode accessMode = AccessMode.auto;
+  AccessMode accessMode = AccessMode.shizuku;
+  OverlayPreferences overlayPreferences = const OverlayPreferences();
   TelemetrySample? latest;
   final List<TelemetrySample> history = [];
   Timer? _timer;
   bool _collecting = false;
   bool _syncingRecording = false;
+  Timer? _overlaySaveTimer;
   DateTime? _lastRecordingSync;
   bool overlayRunning = false;
   bool monitorServiceRunning = false;
@@ -40,11 +43,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   String? shizukuError;
   int pageIndex = 0;
   String? lastError;
-  int refreshIntervalMs = 200;
+  int refreshIntervalMs = 100;
 
   Future<void> initialize() async {
     WidgetsBinding.instance.addObserver(this);
     await refreshStatus();
+    await _loadOverlayPreferences();
     if (recorder.isRecording || recorder.totalCount > 0) {
       await _syncRecordedSamples(limit: 30);
     }
@@ -54,7 +58,10 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
   void _startTimer() {
     _timer?.cancel();
-    _timer = Timer.periodic(Duration(milliseconds: refreshIntervalMs), (_) => collectNow());
+    _timer = Timer.periodic(
+      Duration(milliseconds: refreshIntervalMs),
+      (_) => collectNow(),
+    );
   }
 
   @override
@@ -91,7 +98,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       );
       lastError = null;
       notifyListeners();
-    } catch (error) {
+    } catch (_) {
       lastError = 'Status could not be refreshed. Tap refresh to retry.';
       notifyListeners();
     }
@@ -115,7 +122,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       sample = sample.mergeParsed(fpsData: fpsParsed, gpuData: gpuParsed);
       latest = sample;
       history.add(sample);
-      if (history.length > 480) history.removeAt(0);
+      if (history.length > 600) history.removeAt(0);
       if (recorder.isRecording) {
         final now = DateTime.now();
         if (_lastRecordingSync == null ||
@@ -126,7 +133,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       }
       lastError = null;
       notifyListeners();
-    } catch (error) {
+    } catch (_) {
       lastError = 'Telemetry collection was interrupted. Retrying automatically.';
       notifyListeners();
     } finally {
@@ -147,7 +154,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setRefreshInterval(int milliseconds) {
-    refreshIntervalMs = milliseconds.clamp(200, 1000).toInt();
+    refreshIntervalMs = milliseconds.clamp(100, 1000).toInt();
     _startTimer();
     notifyListeners();
   }
@@ -162,14 +169,6 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       await requestRootPermission();
     } else if (accessMode == AccessMode.shizuku && !shizukuOperational) {
       await requestShizukuPermission();
-    } else if (accessMode == AccessMode.auto &&
-        !rootAvailable &&
-        !shizukuOperational) {
-      if (rootInstalled) {
-        await requestRootPermission();
-      } else if (shizukuAvailable) {
-        await requestShizukuPermission();
-      }
     }
   }
 
@@ -226,6 +225,30 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       lastError = '$error';
       notifyListeners();
     }
+  }
+
+  Future<void> _loadOverlayPreferences() async {
+    try {
+      overlayPreferences = OverlayPreferences.fromMap(
+        await nativeBridge.getOverlayPreferences(),
+      );
+      notifyListeners();
+    } catch (_) {
+      overlayPreferences = const OverlayPreferences();
+    }
+  }
+
+  Future<void> updateOverlayPreferences(OverlayPreferences value) async {
+    overlayPreferences = value;
+    notifyListeners();
+    _overlaySaveTimer?.cancel();
+    _overlaySaveTimer = Timer(const Duration(milliseconds: 70), () {
+      unawaited(nativeBridge.setOverlayPreferences(overlayPreferences.toMap()));
+    });
+  }
+
+  Future<void> resetOverlayPosition() async {
+    await nativeBridge.resetOverlayPosition();
   }
 
   Future<void> requestUsageAccess() async {
@@ -297,6 +320,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _overlaySaveTimer?.cancel();
     super.dispose();
   }
 }

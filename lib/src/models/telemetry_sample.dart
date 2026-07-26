@@ -1,12 +1,10 @@
 import 'dart:convert';
 
-enum AccessMode { auto, standard, shizuku, root }
+enum AccessMode { shizuku, root }
 
 extension AccessModeX on AccessMode {
   String get wireName => name;
   String get label => switch (this) {
-        AccessMode.auto => 'Auto',
-        AccessMode.standard => 'Standard',
         AccessMode.shizuku => 'Shizuku',
         AccessMode.root => 'Root',
       };
@@ -17,8 +15,8 @@ class TelemetrySample {
     required this.timestamp,
     this.sampleIntervalMs,
     this.foregroundPackage,
-    this.accessModeRequested = 'auto',
-    this.accessModeUsed = 'standard',
+    this.accessModeRequested = 'shizuku',
+    this.accessModeUsed = 'shizuku',
     this.backendOperational = true,
     this.backendError,
     this.fpsSource,
@@ -134,8 +132,8 @@ class TelemetrySample {
           : DateTime.now(),
       sampleIntervalMs: _i(source['sampleIntervalMs']),
       foregroundPackage: source['foregroundPackage'] as String?,
-      accessModeRequested: (source['accessModeRequested'] as String?) ?? 'auto',
-      accessModeUsed: (source['accessModeUsed'] as String?) ?? 'standard',
+      accessModeRequested: (source['accessModeRequested'] as String?) ?? 'shizuku',
+      accessModeUsed: (source['accessModeUsed'] as String?) ?? 'shizuku',
       backendOperational: source['backendOperational'] != false,
       backendError: source['backendError'] as String?,
       fpsSource: source['fpsSource'] as String?,

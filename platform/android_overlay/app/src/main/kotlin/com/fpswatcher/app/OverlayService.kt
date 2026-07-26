@@ -10,6 +10,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -34,8 +35,10 @@ class OverlayService : Service() {
     private val executor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
     private val updating = AtomicBoolean(false)
-    private var mode = "auto"
+    private var mode = "shizuku"
     private var lastRecordedMs = 0L
+    private var styleRevision = -1L
+    private var overlayConfig: Map<String, Any> = emptyMap()
 
     override fun onCreate() {
         super.onCreate()
@@ -45,11 +48,11 @@ class OverlayService : Service() {
         collector = TelemetryCollector(applicationContext)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
-        scheduleUpdate()
+        scheduleUpdate(80L)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        mode = intent?.getStringExtra(EXTRA_MODE) ?: mode
+        mode = intent?.getStringExtra(EXTRA_MODE)?.takeIf { it == "root" || it == "shizuku" } ?: mode
 
         when (intent?.getStringExtra(EXTRA_RECORDING_ACTION)) {
             RECORDING_START -> if (!NativeSessionStore.isRecording) NativeSessionStore.start()
@@ -58,6 +61,7 @@ class OverlayService : Service() {
         when (intent?.getStringExtra(EXTRA_OVERLAY_ACTION)) {
             OVERLAY_SHOW -> showOverlay()
             OVERLAY_HIDE -> hideOverlay()
+            OVERLAY_RESET_POSITION -> resetOverlayPosition()
         }
 
         updateNotification()
@@ -74,15 +78,14 @@ class OverlayService : Service() {
         if (overlayView != null || !Settings.canDrawOverlays(this)) return
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val view = TextView(this).apply {
-            text = "FPS —  1% —  0.1% —\nFRAME — ms\nCPU —  APP —\nGPU —  PWR — W"
+            text = "FPS —\nFRAME — ms\nCPU —%\nGPU —%\nPWR — W"
             setTextColor(Color.WHITE)
             textSize = 13f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            setPadding(dp(14), dp(10), dp(14), dp(10))
-            setBackgroundResource(R.drawable.overlay_background)
-            alpha = 0.94f
+            includeFontPadding = false
             setOnTouchListener(DragTouchListener())
         }
+        val savedPosition = OverlayPreferences.position(this)
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -93,14 +96,15 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = dp(18)
-            y = dp(88)
+            x = savedPosition?.first ?: dp(18)
+            y = savedPosition?.second ?: dp(88)
         }
         runCatching { windowManager.addView(view, params) }
             .onSuccess {
                 overlayView = view
                 layoutParams = params
                 isOverlayVisible = true
+                applyOverlayStyle(force = true)
             }
     }
 
@@ -112,32 +116,67 @@ class OverlayService : Service() {
         isOverlayVisible = false
     }
 
-    private fun scheduleUpdate() {
-        handler.postDelayed(object : Runnable {
-            override fun run() {
-                if (updating.compareAndSet(false, true)) {
-                    executor.execute {
-                        val snapshot = runCatching { collector.collect(mode) }.getOrNull()
-                        if (snapshot != null && NativeSessionStore.isRecording) {
-                            val now = System.currentTimeMillis()
-                            if (now - lastRecordedMs >= 500L) {
-                                NativeSessionStore.add(snapshot)
-                                lastRecordedMs = now
-                            }
-                        }
-                        handler.post {
-                            if (snapshot != null && overlayView != null) {
-                                updateOverlayVisibility(snapshot)
-                                updateText(snapshot)
-                            }
-                            updating.set(false)
+    private fun resetOverlayPosition() {
+        OverlayPreferences.resetPosition(this)
+        layoutParams?.let { params ->
+            params.x = dp(18)
+            params.y = dp(88)
+            overlayView?.let { runCatching { windowManager.updateViewLayout(it, params) } }
+        }
+    }
+
+    private fun scheduleUpdate(delayMs: Long) {
+        handler.postDelayed({
+            applyOverlayStyle()
+            if (updating.compareAndSet(false, true)) {
+                executor.execute {
+                    val snapshot = runCatching { collector.collect(mode) }.getOrNull()
+                    if (snapshot != null && NativeSessionStore.isRecording) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastRecordedMs >= 500L) {
+                            NativeSessionStore.add(snapshot)
+                            lastRecordedMs = now
                         }
                     }
+                    handler.post {
+                        if (snapshot != null && overlayView != null) {
+                            updateOverlayVisibility(snapshot)
+                            updateText(snapshot)
+                        }
+                        updating.set(false)
+                        scheduleUpdate(refreshInterval().toLong())
+                    }
                 }
-                handler.postDelayed(this, 200L)
+            } else {
+                scheduleUpdate(refreshInterval().toLong())
             }
-        }, 100L)
+        }, delayMs)
     }
+
+    private fun refreshInterval(): Int =
+        (overlayConfig["refreshIntervalMs"] as? Number)?.toInt()?.coerceIn(100, 1000) ?: 100
+
+    private fun applyOverlayStyle(force: Boolean = false) {
+        val revision = OverlayPreferences.revision(this)
+        if (!force && revision == styleRevision) return
+        styleRevision = revision
+        overlayConfig = OverlayPreferences.snapshot(this)
+        val view = overlayView ?: return
+        val padding = dp((overlayConfig["paddingDp"] as? Number)?.toInt() ?: 10)
+        view.setPadding(padding, padding, padding, padding)
+        view.textSize = (overlayConfig["textSizeSp"] as? Number)?.toFloat() ?: 13f
+        view.alpha = (overlayConfig["opacity"] as? Number)?.toFloat()?.coerceIn(0.25f, 1f) ?: 0.92f
+        view.setTextColor((overlayConfig["textColorValue"] as? Number)?.toInt() ?: Color.WHITE)
+        view.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 0f
+            setColor(Color.argb(235, 7, 16, 24))
+            setStroke(dp(1), Color.argb(105, 57, 231, 208))
+        }
+    }
+
+    private fun enabled(key: String, fallback: Boolean = true): Boolean =
+        overlayConfig[key] as? Boolean ?: fallback
 
     private fun updateOverlayVisibility(data: Map<String, Any?>) {
         val foreground = data["foregroundPackage"] as? String
@@ -148,28 +187,45 @@ class OverlayService : Service() {
     }
 
     private fun updateText(data: Map<String, Any?>) {
-        val fps = decimal(data["fps"])
-        val low1 = decimal(data["onePercentLowFps"])
-        val low01 = decimal(data["pointOnePercentLowFps"])
-        val frame = decimal2(data["frameTimeMs"])
-        val cpu = number(data["cpuUsage"])
-        val appCpu = decimal(data["appCpuUsage"])
-        val appRam = number(data["appRamMb"])
-        val cpuFreq = number(data["cpuFrequencyMhz"])
-        val gpuLoad = number(data["gpuLoad"])
-        val gpuFreq = number(data["gpuFrequencyMhz"])
-        val power = decimal2(data["batteryPowerW"])
-        val temp = decimal(data["batteryTemperatureC"])
-        val access = (data["accessModeUsed"] as? String)?.uppercase(Locale.US) ?: "STANDARD"
-        val requested = (data["accessModeRequested"] as? String)?.uppercase(Locale.US) ?: "AUTO"
-        val accessLabel = if (access == "STANDARD" && requested != "STANDARD") "$access!" else access
-        overlayView?.text = buildString {
-            append("FPS $fps  1% $low1  0.1% $low01  $accessLabel")
-            append("\nFRAME $frame ms")
-            append("\nCPU $cpu%  $cpuFreq MHz  APP $appCpu%")
-            append("\nGPU $gpuLoad%  $gpuFreq MHz  RAM $appRam MB")
-            append("\nPWR $power W  BAT $temp°C")
+        val lines = mutableListOf<String>()
+
+        if (enabled("showFps") || enabled("showLows")) {
+            val parts = mutableListOf<String>()
+            if (enabled("showFps")) parts += "FPS ${decimal(data["fps"])}"
+            if (enabled("showLows")) {
+                parts += "1% ${decimal(data["onePercentLowFps"])}"
+                parts += "0.1% ${decimal(data["pointOnePercentLowFps"])}"
+            }
+            if (parts.isNotEmpty()) lines += parts.joinToString("  ")
         }
+        if (enabled("showFrameTime")) {
+            lines += "FRAME ${decimal2(data["frameTimeMs"])} ms  P95 ${decimal2(data["frameTimeP95Ms"])}"
+        }
+        if (enabled("showSystemCpu") || enabled("showAppCpu") || enabled("showCpuFrequency")) {
+            val parts = mutableListOf<String>()
+            if (enabled("showSystemCpu")) parts += "CPU ${decimal(data["cpuUsage"])}%"
+            if (enabled("showCpuFrequency")) parts += "${number(data["cpuFrequencyMhz"])} MHz"
+            if (enabled("showAppCpu")) parts += "APP ${decimal(data["appCpuUsage"])}%"
+            if (parts.isNotEmpty()) lines += parts.joinToString("  ")
+        }
+        if (enabled("showGpuLoad") || enabled("showGpuFrequency")) {
+            val parts = mutableListOf<String>()
+            if (enabled("showGpuLoad")) parts += "GPU ${decimal(data["gpuLoad"])}%"
+            if (enabled("showGpuFrequency")) parts += "${number(data["gpuFrequencyMhz"])} MHz"
+            if (parts.isNotEmpty()) lines += parts.joinToString("  ")
+        }
+        if (enabled("showGameRam")) {
+            lines += "RAM ${number(data["appRamMb"])} MB  RSS ${number(data["appRssMb"])} MB"
+        }
+        if (enabled("showPower") || enabled("showBatteryTemperature") || enabled("showSocTemperature")) {
+            val parts = mutableListOf<String>()
+            if (enabled("showPower")) parts += "PWR ${decimal2(data["batteryPowerW"])} W"
+            if (enabled("showBatteryTemperature")) parts += "BAT ${decimal(data["batteryTemperatureC"])}°C"
+            if (enabled("showSocTemperature")) parts += "SOC ${decimal(data["socTemperatureC"])}°C"
+            if (parts.isNotEmpty()) lines += parts.joinToString("  ")
+        }
+
+        overlayView?.text = lines.takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "FPSWatcher"
     }
 
     private fun number(value: Any?): String =
@@ -262,6 +318,7 @@ class OverlayService : Service() {
                 }
 
                 MotionEvent.ACTION_UP -> {
+                    OverlayPreferences.savePosition(this@OverlayService, params.x, params.y)
                     view.performClick()
                     return true
                 }
@@ -276,6 +333,7 @@ class OverlayService : Service() {
         const val EXTRA_RECORDING_ACTION = "recording_action"
         const val OVERLAY_SHOW = "show"
         const val OVERLAY_HIDE = "hide"
+        const val OVERLAY_RESET_POSITION = "reset_position"
         const val RECORDING_START = "start"
         const val RECORDING_STOP = "stop"
         private const val CHANNEL_ID = "fpswatcher_monitor"

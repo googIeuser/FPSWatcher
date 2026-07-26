@@ -99,19 +99,17 @@ class TelemetryCollector(context: Context) {
                 .onFailure { error -> warnings += "$label: ${error.javaClass.simpleName}" }
         }
 
-        val requestedMode = mode.lowercase().takeIf { it in setOf("auto", "standard", "shizuku", "root") } ?: "auto"
+        val requestedMode = mode.lowercase().takeIf { it == "shizuku" || it == "root" } ?: "shizuku"
         result["accessModeRequested"] = requestedMode
         val backend = runCatching { privilegedExecutor(requestedMode) }
             .onFailure { warnings += "backend: ${it.javaClass.simpleName}" }
             .getOrNull()
-        result["accessModeUsed"] = backend?.name ?: "standard"
-        result["backendOperational"] = backend != null || requestedMode == "standard"
-        if (backend == null && requestedMode != "standard") {
+        result["accessModeUsed"] = backend?.name ?: requestedMode
+        result["backendOperational"] = backend != null
+        if (backend == null) {
             result["backendError"] = when (requestedMode) {
                 "root" -> RootShell.lastError ?: "Root command unavailable or denied"
-                "shizuku" -> ShizukuClient.lastError ?: "Shizuku UserService unavailable"
-                else -> listOfNotNull(RootShell.lastError, ShizukuClient.lastError).joinToString("; ")
-                    .ifBlank { "No privileged backend is operational" }
+                else -> ShizukuClient.lastError ?: "Shizuku UserService unavailable"
             }
         }
 
@@ -154,7 +152,7 @@ class TelemetryCollector(context: Context) {
             runCatching { applyGpuMetrics(cachedLocalGpuRaw, result) }
                 .onFailure { warnings += "gpuParse: ${it.javaClass.simpleName}" }
             if (result["gpuLoad"] != null || result["gpuFrequencyMhz"] != null) {
-                result["gpuSource"] = "standard-sysfs"
+                result["gpuSource"] = "public-sysfs"
             } else if (result["gpuModel"] != null) {
                 result["gpuSource"] = "egl"
             }
@@ -272,10 +270,8 @@ class TelemetryCollector(context: Context) {
         }
 
         return when (mode.lowercase()) {
-            "standard" -> null
-            "shizuku" -> shizuku() ?: root()
-            "root" -> root() ?: shizuku()
-            else -> root() ?: shizuku()
+            "root" -> root()
+            else -> shizuku()
         }
     }
 
@@ -829,8 +825,8 @@ class TelemetryCollector(context: Context) {
 
     companion object {
         private const val FOREGROUND_POLL_MS = 200L
-        private const val LOCAL_GPU_POLL_MS = 200L
-        private const val PRIVILEGED_POLL_MS = 200L
+        private const val LOCAL_GPU_POLL_MS = 100L
+        private const val PRIVILEGED_POLL_MS = 100L
         private const val FRAME_POLL_MS = 1_000L
         private val FRAME_KEYS = setOf(
             "surfaceFlingerRaw", "fpsSource", "fps", "onePercentLowFps",
