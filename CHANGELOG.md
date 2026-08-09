@@ -2,21 +2,44 @@
 
 ## 1.3.0
 
-- Refreshed the Android launcher icon while preserving the original monitor + frame-time identity: larger monitor glyph, cyan/teal-first palette, restrained purple accent, reduced glow, simplified frame treatment, and improved adaptive-icon safe-area clarity.
-- Expanded the telemetry engine into an advanced game-performance profiler while retaining the Shizuku/Root-only backend model.
-- Added rolling 5%, 1% and 0.1% low FPS, median/min/max FPS, P95/P99/best/worst frame time, frame-time histograms, frame-pacing score, micro-stutter, slow-frame, frozen-frame and estimated missed-VSync counters.
-- Added load-aware CPU/GPU throttling heuristics, thermal-stability scoring, CPU/GPU/SoC thermal-zone matching, CPU policy limits, per-core load/frequency, governor, affinity, scheduler, cpuset, uclamp, nice and thread telemetry.
-- Expanded GPU discovery across KGSL, devfreq, Mali, GED and debugfs with current/min/max clock, governor, load, renderer/vendor and raw diagnostic output.
-- Added process PSS/RSS/native/graphics memory, swap, ZRAM and PSI memory-pressure telemetry.
-- Added battery drain per hour, estimated remaining gaming time, FPS-per-watt efficiency, charge-counter tracking and explicit charging-state handling.
-- Added non-blocking ping/jitter/loss probes, RX/TX throughput, Wi-Fi details, cellular summaries, foreground game-category detection and best-effort foreground surface dimensions.
-- Added FPSWatcher self-overhead metrics and collector-latency diagnostics.
-- Added a live frame-time histogram, expanded capability matrix, raw expert diagnostics, performance event timeline and first-half/second-half session drift comparison.
-- Expanded CSV/JSON/HTML exports with advanced telemetry and hardened session recording against corrupt rows and oversized MethodChannel payloads.
-- Expanded the square native overlay with advanced telemetry presets, adaptive thresholds, metric visibility controls, 100/200/500 ms refresh options and game-only visibility.
-- Reduced UI overhead by retaining only scalar FPS history instead of hundreds of raw SurfaceFlinger/GPU payloads and by invoking Rust parsing only when native metrics need a fallback.
-- Increased privileged FPS polling to 250 ms while keeping expensive process, graphics-API and thermal-zone probes rate-limited to one-second windows.
-- Fixed duplicate Dart overlay layout parameters and a duplicate Rust gfxinfo parser conversion that would have prevented the advanced branch from compiling cleanly.
+### Highlights
+
+- Refreshed the Android launcher icon while preserving the original FPSWatcher monitor + frame-time identity. The new adaptive icon uses a larger monitor glyph, a cyan/teal-first palette, restrained purple accents, reduced glow, cleaner geometry, and improved safe-area clarity.
+- Expanded FPSWatcher from a basic overlay into an advanced Android game-performance profiler built around Shizuku and Root telemetry.
+- Removed the legacy duplicate Android build workflow from the source package. Normal CI now produces only a debug APK; signed release APK/AAB packages are reserved for the Stable Release workflow.
+
+### Frame performance
+
+- Added rolling 5%, 1%, and 0.1% low FPS, median/min/max FPS, average/P95/P99/best/worst frame time, frame-time histograms, frame-pacing analysis, and stability scoring.
+- Added micro-stutter, slow-frame, frozen-frame, 25/50/100 ms spike, and estimated missed-VSync counters.
+- Added refresh-rate mismatch detection and lightweight live FPS/frame-time history.
+
+### CPU, GPU, thermal, and process telemetry
+
+- Added per-core CPU load/frequency, CPU policy limits, governor, affinity, scheduler, cpuset, uclamp, nice value, thread count, and load-aware throttling analysis.
+- Expanded GPU discovery across Qualcomm KGSL, generic devfreq, Arm Mali, MediaTek GED, and selected debugfs nodes, with current/min/max clock, governor, load, renderer/vendor, and raw diagnostic output.
+- Added CPU/GPU/SoC thermal-zone matching, thermal-stability scoring, and throttling event detection.
+- Added game-process PSS/RSS/native/graphics memory plus system RAM, swap, ZRAM, and PSI memory-pressure telemetry.
+
+### Power, network, and device telemetry
+
+- Added battery-side discharge power, current, voltage, drain per hour, charge-counter tracking, FPS-per-watt efficiency, and estimated remaining gaming time.
+- Added explicit charging-state handling so charging power is never presented as game discharge power.
+- Added asynchronous ping/jitter/loss probes, RX/TX throughput, Wi-Fi details, cellular summaries, game-category detection, and best-effort foreground surface dimensions.
+- Added FPSWatcher self-overhead metrics and native collector-latency diagnostics.
+
+### Overlay, sessions, and reports
+
+- Expanded the square native overlay with advanced telemetry presets, adaptive thresholds, metric visibility controls, 100/200/500 ms refresh options, and game-only visibility.
+- Added a performance event timeline, manual session markers, automatic performance events, and first-half/second-half session drift comparison.
+- Expanded CSV, JSON, and HTML reports plus dashboard PNG export.
+- Hardened native session recording against corrupt rows and oversized MethodChannel payloads.
+
+### Reliability and efficiency
+
+- Reduced UI overhead by retaining scalar FPS history instead of large raw SurfaceFlinger/GPU payloads and by invoking Rust parsing only when native metrics require a fallback.
+- Kept expensive process, graphics-API, and thermal probes independently rate-limited while faster counters remain responsive.
+- Fixed duplicate Dart overlay layout parameters and duplicate Rust gfxinfo parser conversion issues found during the v1.3.0 audit.
 
 ## 1.2.4
 

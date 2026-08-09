@@ -82,7 +82,7 @@ Fast counters and UI updates use short intervals while expensive `dumpsys`/proce
 
 ## Repository workflow
 
-The repository is GitHub Desktop friendly. CI validates Flutter/Rust sources and builds Android artifacts. Stable releases use a persistent Android signing key supplied through GitHub Actions secrets; see [`docs/STABLE_RELEASE.md`](docs/STABLE_RELEASE.md).
+The repository is GitHub Desktop friendly. Normal CI validates Flutter/Rust sources and publishes **only a debug APK artifact**. Signed universal/split APKs and the Play Store AAB are built exclusively by the **Stable Release** workflow using the persistent Android signing key supplied through GitHub Actions secrets; see [`docs/STABLE_RELEASE.md`](docs/STABLE_RELEASE.md).
 
 ## Portability notes
 
