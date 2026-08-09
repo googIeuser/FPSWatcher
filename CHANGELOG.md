@@ -2,6 +2,7 @@
 
 ## 1.3.0
 
+- Refreshed the Android launcher icon while preserving the original monitor + frame-time identity: larger monitor glyph, cyan/teal-first palette, restrained purple accent, reduced glow, simplified frame treatment, and improved adaptive-icon safe-area clarity.
 - Expanded the telemetry engine into an advanced game-performance profiler while retaining the Shizuku/Root-only backend model.
 - Added rolling 5%, 1% and 0.1% low FPS, median/min/max FPS, P95/P99/best/worst frame time, frame-time histograms, frame-pacing score, micro-stutter, slow-frame, frozen-frame and estimated missed-VSync counters.
 - Added load-aware CPU/GPU throttling heuristics, thermal-stability scoring, CPU/GPU/SoC thermal-zone matching, CPU policy limits, per-core load/frequency, governor, affinity, scheduler, cpuset, uclamp, nice and thread telemetry.
