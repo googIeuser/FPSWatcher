@@ -22,7 +22,8 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
   AccessMode accessMode = AccessMode.shizuku;
   OverlayPreferences overlayPreferences = const OverlayPreferences();
   TelemetrySample? latest;
-  final List<TelemetrySample> history = [];
+  final List<double> fpsHistory = [];
+  String? _historyPackage;
   Timer? _timer;
   bool _collecting = false;
   bool _syncingRecording = false;
@@ -67,7 +68,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
 
 
   void _handleTick() {
-    if (pageIndex == 0) {
+    if (pageIndex == 0 || pageIndex == 2) {
       unawaited(collectNow());
       return;
     }
@@ -139,18 +140,28 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       final native = await nativeBridge.collectSnapshot(accessMode.wireName);
       var sample = TelemetrySample.fromNative(native);
       final packageName = sample.foregroundPackage ?? '';
-      final fpsParsed = rustCore.parseSurfaceFlinger(
-        sample.surfaceFlingerRaw ?? '',
-        packageName,
-      );
-      final gpuParsed = rustCore.parseGpu(
-        sample.gpuRaw ?? '',
-        sample.gpuModel ?? '',
-      );
-      sample = sample.mergeParsed(fpsData: fpsParsed, gpuData: gpuParsed);
+      final fpsParsed = sample.fps == null && (sample.surfaceFlingerRaw?.isNotEmpty ?? false)
+          ? rustCore.parseSurfaceFlinger(sample.surfaceFlingerRaw ?? '', packageName)
+          : null;
+      final needsGpuFallback = sample.gpuLoad == null ||
+          sample.gpuFrequencyMhz == null ||
+          sample.gpuModel == null;
+      final gpuParsed = needsGpuFallback && (sample.gpuRaw?.isNotEmpty ?? false)
+          ? rustCore.parseGpu(sample.gpuRaw ?? '', sample.gpuModel ?? '')
+          : null;
+      if (fpsParsed != null || gpuParsed != null) {
+        sample = sample.mergeParsed(fpsData: fpsParsed, gpuData: gpuParsed);
+      }
       latest = sample;
-      history.add(sample);
-      if (history.length > 600) history.removeAt(0);
+      if (sample.foregroundPackage != _historyPackage) {
+        fpsHistory.clear();
+        _historyPackage = sample.foregroundPackage;
+      }
+      final currentFps = sample.fps;
+      if (currentFps != null && currentFps.isFinite) {
+        fpsHistory.add(currentFps);
+        if (fpsHistory.length > 600) fpsHistory.removeAt(0);
+      }
       if (recorder.isRecording) {
         final now = DateTime.now();
         if (_lastRecordingSync == null ||
@@ -192,7 +203,7 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     if (pageIndex == index) return;
     pageIndex = index;
     notifyListeners();
-    if (index == 0) {
+    if (index == 0 || index == 2) {
       unawaited(collectNow());
     } else if (index == 1) {
       unawaited(_syncRecordedSamples(limit: 60));
@@ -226,6 +237,12 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<void> addSessionMarker(String label) async {
+    if (!recorder.isRecording) return;
+    await nativeBridge.addSessionMarker(label);
+    await _syncRecordedSamples(limit: 80);
+  }
+
   Future<String?> exportCsv() async {
     await _syncRecordedSamples();
     final csv = recorder.createCsv();
@@ -234,6 +251,28 @@ class AppController extends ChangeNotifier with WidgetsBindingObserver {
       bytes: Uint8List.fromList(utf8.encode(csv)),
       fileName: 'FPSWatcher-session-$stamp.csv',
       mimeType: 'text/csv',
+    );
+  }
+
+  Future<String?> exportJson() async {
+    await _syncRecordedSamples();
+    final json = recorder.createJson();
+    final stamp = _fileStamp(DateTime.now());
+    return nativeBridge.saveBytes(
+      bytes: Uint8List.fromList(utf8.encode(json)),
+      fileName: 'FPSWatcher-session-$stamp.json',
+      mimeType: 'application/json',
+    );
+  }
+
+  Future<String?> exportHtml() async {
+    await _syncRecordedSamples();
+    final html = recorder.createHtml();
+    final stamp = _fileStamp(DateTime.now());
+    return nativeBridge.saveBytes(
+      bytes: Uint8List.fromList(utf8.encode(html)),
+      fileName: 'FPSWatcher-session-$stamp.html',
+      mimeType: 'text/html',
     );
   }
 

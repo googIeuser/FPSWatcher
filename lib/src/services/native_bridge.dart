@@ -55,6 +55,8 @@ class NativeBridge {
   Future<void> startRecording(String mode) =>
       _channel.invokeMethod('startRecording', {'mode': mode});
   Future<void> stopRecording() => _channel.invokeMethod('stopRecording');
+  Future<void> addSessionMarker(String label) =>
+      _channel.invokeMethod('addSessionMarker', {'label': label});
 
   Future<Map<dynamic, dynamic>> getRecordedSamples({int? limit, int? offset}) async {
     final arguments = <String, dynamic>{

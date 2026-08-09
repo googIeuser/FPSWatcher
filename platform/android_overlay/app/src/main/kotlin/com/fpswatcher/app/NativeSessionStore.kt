@@ -62,6 +62,7 @@ object NativeSessionStore {
         val cleaned = FlutterChannelValue.stringMap(source).apply {
             remove("surfaceFlingerRaw")
             remove("gpuRaw")
+            remove("frameHistogramMs")
         }
         synchronized(lock) {
             if (!isRecording) return
@@ -82,6 +83,35 @@ object NativeSessionStore {
                 }
             }.onFailure {
                 closeWriter()
+            }
+        }
+    }
+
+    fun addMarker(label: String) {
+        if (!isRecording) return
+        val cleanLabel = label.trim().take(120).ifBlank { "Manual marker" }
+        val marker = hashMapOf<String, Any?>(
+            "timestampMs" to System.currentTimeMillis(),
+            "eventType" to "marker",
+            "eventLabel" to cleanLabel,
+            "backendOperational" to true,
+        )
+        synchronized(lock) {
+            samples.addLast(marker)
+            while (samples.size > MAX_SAMPLES) samples.removeFirst()
+            runCatching {
+                if (writer == null) writer = openWriter(append = true)
+                writer?.apply {
+                    write(JSONObject(marker).toString())
+                    newLine()
+                    pendingWrites += 1
+                    val now = System.currentTimeMillis()
+                    if (pendingWrites >= FLUSH_EVERY_SAMPLES || now - lastFlushMs >= FLUSH_EVERY_MS) {
+                        flush()
+                        pendingWrites = 0
+                        lastFlushMs = now
+                    }
+                }
             }
         }
     }

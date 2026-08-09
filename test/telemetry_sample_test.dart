@@ -94,4 +94,51 @@ void main() {
     expect(preferences.showGpuLoad, isFalse);
   });
 
+
+  test('parses advanced telemetry fields and frame histogram safely', () {
+    final sample = TelemetrySample.fromNative({
+      'foregroundIsGame': true,
+      'framePacingScore': 94.2,
+      'frameHistogramMs': [
+        [8, 100],
+        ['16.0', '20'],
+        ['bad'],
+      ],
+      'cpuCoreUsagePercent': [20, 40.5],
+      'cpuTemperatureC': 47.2,
+      'gpuTemperatureC': '44.1',
+      'cellularNetworkType': 'NR',
+      'windowWidthPx': 2400,
+      'windowHeightPx': '1080',
+    });
+    expect(sample.foregroundIsGame, isTrue);
+    expect(sample.framePacingScore, 94.2);
+    expect(sample.frameHistogramMs, [
+      [8.0, 100.0],
+      [16.0, 20.0],
+    ]);
+    expect(sample.cpuCoreUsagePercent, [20.0, 40.5]);
+    expect(sample.cpuTemperatureC, 47.2);
+    expect(sample.gpuTemperatureC, 44.1);
+    expect(sample.cellularNetworkType, 'NR');
+    expect(sample.windowWidthPx, 2400);
+    expect(sample.windowHeightPx, 1080);
+  });
+
+  test('advanced overlay presets expose focused metric groups', () {
+    final base = const OverlayPreferences();
+    final performance = base.preset('performance');
+    final battery = base.preset('battery');
+    final full = base.preset('full');
+    expect(performance.showLows, isTrue);
+    expect(performance.showGpuLoad, isTrue);
+    expect(performance.showDroppedFrames, isTrue);
+    expect(battery.showPower, isTrue);
+    expect(battery.showEfficiency, isTrue);
+    expect(battery.showBatteryDrain, isTrue);
+    expect(full.showCpuCores, isTrue);
+    expect(full.showProcessDetails, isTrue);
+    expect(full.showMonitorOverhead, isTrue);
+  });
+
 }

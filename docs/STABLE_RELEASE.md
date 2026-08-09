@@ -15,10 +15,10 @@ Never commit the keystore or its passwords.
 
 ## Publishing
 
-1. Set `pubspec.yaml` to a version such as `1.2.4+124`.
-2. Add an exact `## 1.2.4` section to `CHANGELOG.md`.
+1. Set `pubspec.yaml` to a version such as `1.3.0+130`.
+2. Add an exact `## 1.3.0` section to `CHANGELOG.md`.
 3. Push to the default branch and wait for CI to pass.
 4. Open **Actions → Stable Release → Run workflow**.
-5. Enter `1.2.4`.
+5. Enter `1.3.0`.
 
 The workflow validates the version, runs Flutter/Rust checks, signs APK/AAB outputs, verifies signatures, creates SHA-256 sums and provenance attestations, and publishes a Latest GitHub Release.

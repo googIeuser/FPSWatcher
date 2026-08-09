@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'state/app_controller.dart';
 import 'ui/dashboard_page.dart';
+import 'ui/diagnostics_page.dart';
 import 'ui/session_page.dart';
 import 'ui/settings_page.dart';
 
@@ -60,6 +61,7 @@ class _HomeShell extends StatelessWidget {
     final pages = <Widget>[
       DashboardPage(controller: controller),
       SessionPage(controller: controller),
+      DiagnosticsPage(controller: controller),
       SettingsPage(controller: controller),
     ];
     return Scaffold(
@@ -77,6 +79,11 @@ class _HomeShell extends StatelessWidget {
             icon: Icon(Icons.timeline_outlined),
             selectedIcon: Icon(Icons.timeline),
             label: 'Session',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.health_and_safety_outlined),
+            selectedIcon: Icon(Icons.health_and_safety),
+            label: 'Diagnostics',
           ),
           NavigationDestination(
             icon: Icon(Icons.tune_outlined),

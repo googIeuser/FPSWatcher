@@ -1,25 +1,25 @@
 # Architecture
 
-FPSWatcher Next has three layers:
+FPSWatcher uses three deliberately separated layers.
 
-- **Flutter**: dashboard, session history, settings, PNG/CSV export and overlay preview.
-- **Kotlin**: Android permissions, foreground detection, Shizuku/Root execution, telemetry scheduling, persistence and the native overlay.
-- **Rust**: fallback frame/GPU parsing and CSV generation.
+## Flutter
 
-## Backend policy
+Flutter owns dashboard rendering, session/report UX, diagnostics, settings, charts and state management. It does not directly own the game overlay or privileged shell lifecycle.
 
-Only Shizuku and Root are user-selectable. Starting the overlay or recorder fails with a clear error when the selected backend is not operational. No hidden Standard fallback is used.
+## Kotlin / Android
 
-## Collection policy
+The Android layer owns Shizuku and root execution, foreground-game detection, foreground service lifecycle, native overlay windows, Android framework metrics, kernel/sysfs probes, session persistence and MethodChannel sanitization. One failed sensor is isolated from the rest of a snapshot.
 
-A process-local `TelemetrySnapshotCache` lets the Flutter activity and overlay service reuse the same fresh snapshot. The overlay service is the primary collector while it is active; the dashboard reuses its data. Fast sysfs/API counters and slow shell/dumpsys probes use separate polling intervals.
+Fast CPU/GPU/power counters are separated from expensive process/dumpsys probes. Network probing runs asynchronously. Short-lived snapshot sharing prevents the dashboard and overlay from issuing duplicate privileged commands.
 
-Frame histograms are accumulated for 30 seconds. 1% low is withheld until 100 frames are available, and 0.1% low until 1,000 frames are available. Native Kotlin values are authoritative; Rust only fills a missing parse result.
+## Rust
 
-## Persistence
+Rust is intentionally limited to computation-heavy, portable parsing and export work: SurfaceFlinger/gfxinfo frame parsing, rolling tail statistics, frame-pacing calculations, GPU text parsing and CSV generation. Android system access remains in Kotlin to avoid unnecessary JNI/FFI complexity.
 
-Recorded JSONL samples are sanitized into Flutter codec-compatible values, buffered before disk flush, capped in memory, compacted when oversized and restored row-by-row so one corrupt line does not discard the rest of a session.
+## Backends
 
-## Overlay
+Only Shizuku and Root are exposed. Shizuku capability is limited to what Android's shell UID and SELinux policy can read. Root uses standard `su -c` behavior and is compatible with managers such as KernelSU/SukiSU and Magisk when permission is granted.
 
-Overlay preferences live in Android SharedPreferences. The square native TextView supports background-only opacity, per-metric visibility, refresh interval, text styling, drag-position persistence and screen-bound clamping. The Flutter settings page renders a matching preview.
+## Data integrity
+
+Every MethodChannel value is recursively converted to StandardMessageCodec-safe Dart/Kotlin primitives. Persisted sessions use buffered JSONL, tolerate corrupt rows and omit very large transient histogram/raw fields where appropriate. Missing metrics stay missing rather than being replaced with fabricated zeroes.

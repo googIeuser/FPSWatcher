@@ -9,11 +9,25 @@ use std::os::raw::c_char;
 struct FpsStats {
     source: Option<String>,
     average_fps: Option<f64>,
+    five_percent_low_fps: Option<f64>,
     one_percent_low_fps: Option<f64>,
     point_one_percent_low_fps: Option<f64>,
+    median_fps: Option<f64>,
+    minimum_instant_fps: Option<f64>,
+    maximum_instant_fps: Option<f64>,
     frame_time_ms: Option<f64>,
     frame_time_p95_ms: Option<f64>,
     frame_time_p99_ms: Option<f64>,
+    best_frame_time_ms: Option<f64>,
+    worst_frame_time_ms: Option<f64>,
+    frame_stability_score: Option<f64>,
+    frame_pacing_score: Option<f64>,
+    stutter25ms_count: Option<u64>,
+    stutter50ms_count: Option<u64>,
+    stutter100ms_count: Option<u64>,
+    micro_stutter_count: Option<u64>,
+    slow_frame_count: Option<u64>,
+    frozen_frame_count: Option<u64>,
     total_frames: Option<u64>,
     matched_layer: Option<String>,
 }
@@ -23,7 +37,9 @@ struct FpsStats {
 struct GpuStats {
     model: Option<String>,
     frequency_mhz: Option<f64>,
+    min_frequency_mhz: Option<f64>,
     max_frequency_mhz: Option<f64>,
+    governor: Option<String>,
     load_percent: Option<f64>,
 }
 
@@ -164,19 +180,39 @@ fn parse_surfaceflinger(raw: &str, package_name: &str) -> FpsStats {
     let histogram_total: u64 = histogram.iter().map(|entry| entry.1).sum();
     let mean_frame_time = weighted_mean_ms(&histogram);
 
+    let p50 = percentile_ms(&histogram, histogram_total, 0.50);
+    let p99 = percentile_ms(&histogram, histogram_total, 0.99);
+    let best = histogram.first().map(|entry| entry.0);
+    let worst = histogram.last().map(|entry| entry.0);
     FpsStats {
         source: None,
         average_fps: average_fps.or_else(|| mean_frame_time.map(|ms| 1000.0 / ms)),
+        five_percent_low_fps: (histogram_total >= 20)
+            .then(|| tail_low_fps(&histogram, histogram_total, 0.05))
+            .flatten(),
         one_percent_low_fps: (histogram_total >= 100)
             .then(|| tail_low_fps(&histogram, histogram_total, 0.01))
             .flatten(),
         point_one_percent_low_fps: (histogram_total >= 1_000)
             .then(|| tail_low_fps(&histogram, histogram_total, 0.001))
             .flatten(),
+        median_fps: p50.filter(|ms| *ms > 0.0).map(|ms| 1000.0 / ms),
+        minimum_instant_fps: worst.filter(|ms| *ms > 0.0).map(|ms| 1000.0 / ms),
+        maximum_instant_fps: best.filter(|ms| *ms > 0.0).map(|ms| (1000.0 / ms).min(1000.0)),
         frame_time_ms: mean_frame_time
             .or_else(|| average_fps.filter(|fps| *fps > 0.0).map(|fps| 1000.0 / fps)),
         frame_time_p95_ms: percentile_ms(&histogram, histogram_total, 0.95),
-        frame_time_p99_ms: percentile_ms(&histogram, histogram_total, 0.99),
+        frame_time_p99_ms: p99,
+        best_frame_time_ms: best,
+        worst_frame_time_ms: worst,
+        frame_stability_score: mean_frame_time.zip(p99).map(|(mean, tail)| (mean / tail * 100.0).clamp(0.0, 100.0)),
+        frame_pacing_score: frame_pacing_score(&histogram, mean_frame_time),
+        stutter25ms_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 25.0).map(|(_, count)| *count).sum()),
+        stutter50ms_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 50.0).map(|(_, count)| *count).sum()),
+        stutter100ms_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 100.0).map(|(_, count)| *count).sum()),
+        micro_stutter_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 20.0 && *ms < 50.0).map(|(_, count)| *count).sum()),
+        slow_frame_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 25.0).map(|(_, count)| *count).sum()),
+        frozen_frame_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 700.0).map(|(_, count)| *count).sum()),
         total_frames: total_frames.or_else(|| (histogram_total > 0).then_some(histogram_total)),
         matched_layer,
     }
@@ -216,18 +252,38 @@ fn parse_gfxinfo(raw: &str) -> FpsStats {
     };
     let histogram: Vec<(f64, u64)> = durations_ms.iter().map(|value| (*value, 1)).collect();
 
+    let p50 = percentile_ms(&histogram, total, 0.50);
+    let p99 = percentile_ms(&histogram, total, 0.99);
+    let best = durations_ms.first().copied();
+    let worst = durations_ms.last().copied();
     FpsStats {
         source: None,
         average_fps: mean.map(|ms| 1000.0 / ms).map(|fps| fps.clamp(0.0, 1000.0)),
+        five_percent_low_fps: (total >= 20)
+            .then(|| tail_low_fps(&histogram, total, 0.05))
+            .flatten(),
         one_percent_low_fps: (total >= 100)
             .then(|| tail_low_fps(&histogram, total, 0.01))
             .flatten(),
         point_one_percent_low_fps: (total >= 1_000)
             .then(|| tail_low_fps(&histogram, total, 0.001))
             .flatten(),
+        median_fps: p50.filter(|ms| *ms > 0.0).map(|ms| 1000.0 / ms),
+        minimum_instant_fps: worst.filter(|ms| *ms > 0.0).map(|ms| 1000.0 / ms),
+        maximum_instant_fps: best.filter(|ms| *ms > 0.0).map(|ms| (1000.0 / ms).min(1000.0)),
         frame_time_ms: mean,
         frame_time_p95_ms: percentile_ms(&histogram, total, 0.95),
-        frame_time_p99_ms: percentile_ms(&histogram, total, 0.99),
+        frame_time_p99_ms: p99,
+        best_frame_time_ms: best,
+        worst_frame_time_ms: worst,
+        frame_stability_score: mean.zip(p99).map(|(avg, tail)| (avg / tail * 100.0).clamp(0.0, 100.0)),
+        frame_pacing_score: frame_pacing_score(&histogram, mean),
+        stutter25ms_count: Some(durations_ms.iter().filter(|ms| **ms >= 25.0).count() as u64),
+        stutter50ms_count: Some(durations_ms.iter().filter(|ms| **ms >= 50.0).count() as u64),
+        stutter100ms_count: Some(durations_ms.iter().filter(|ms| **ms >= 100.0).count() as u64),
+        micro_stutter_count: Some(durations_ms.iter().filter(|ms| **ms >= 20.0 && **ms < 50.0).count() as u64),
+        slow_frame_count: Some(durations_ms.iter().filter(|ms| **ms >= 25.0).count() as u64),
+        frozen_frame_count: Some(durations_ms.iter().filter(|ms| **ms >= 700.0).count() as u64),
         total_frames: (total > 0).then_some(total),
         matched_layer: None,
     }
@@ -243,6 +299,24 @@ fn weighted_mean_ms(histogram: &[(f64, u64)]) -> Option<f64> {
         .map(|(ms, frames)| *ms * *frames as f64)
         .sum::<f64>();
     Some(sum / count as f64)
+}
+
+fn frame_pacing_score(histogram: &[(f64, u64)], mean: Option<f64>) -> Option<f64> {
+    let mean = mean.filter(|value| *value > 0.0)?;
+    let total: u64 = histogram.iter().map(|entry| entry.1).sum();
+    if total == 0 {
+        return None;
+    }
+    let variance = histogram
+        .iter()
+        .map(|(ms, count)| {
+            let diff = *ms - mean;
+            diff * diff * *count as f64
+        })
+        .sum::<f64>()
+        / total as f64;
+    let coefficient = variance.sqrt() / mean;
+    Some((100.0 / (1.0 + coefficient * 2.0)).clamp(0.0, 100.0))
 }
 
 fn percentile_ms(histogram: &[(f64, u64)], total: u64, percentile: f64) -> Option<f64> {
@@ -289,7 +363,9 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
 
     let mut model = (!fallback_model.trim().is_empty()).then(|| fallback_model.trim().to_string());
     let mut frequency_mhz = None;
+    let mut min_frequency_mhz = None;
     let mut max_frequency_mhz = None;
+    let mut governor = None;
     let mut load_percent = None;
 
     for capture in key_value_regex.captures_iter(raw) {
@@ -303,8 +379,13 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
         }
         if max_frequency_mhz.is_none() && (key.contains("maxfreq") || key.contains("max_freq")) {
             max_frequency_mhz = first_number(value, &number_regex).map(normalize_frequency_mhz);
+        } else if min_frequency_mhz.is_none() && (key.contains("minfreq") || key.contains("min_freq")) {
+            min_frequency_mhz = first_number(value, &number_regex).map(normalize_frequency_mhz);
         } else if frequency_mhz.is_none() && (key.contains("freq") || key.contains("clock")) {
             frequency_mhz = first_number(value, &number_regex).map(normalize_frequency_mhz);
+        }
+        if governor.is_none() && key.contains("governor") && !value.is_empty() {
+            governor = Some(value.to_string());
         }
         if load_percent.is_none() && (key.contains("load") || key.contains("util") || key.contains("busy")) {
             load_percent = parse_load(value, &number_regex);
@@ -338,7 +419,9 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
     GpuStats {
         model,
         frequency_mhz: frequency_mhz.filter(|value| value.is_finite() && *value >= 0.0),
+        min_frequency_mhz: min_frequency_mhz.filter(|value| value.is_finite() && *value >= 0.0),
         max_frequency_mhz: max_frequency_mhz.filter(|value| value.is_finite() && *value >= 0.0),
+        governor,
         load_percent: load_percent.map(|value| value.clamp(0.0, 100.0)),
     }
 }
@@ -377,34 +460,88 @@ fn session_csv(input: &str) -> Result<String, serde_json::Error> {
         "timestamp",
         "sampleIntervalMs",
         "foregroundPackage",
+        "foregroundIsGame",
+        "eventType",
+        "eventLabel",
         "accessMode",
         "fpsSource",
         "fps",
+        "fivePercentLowFps",
         "onePercentLowFps",
         "pointOnePercentLowFps",
+        "medianFps",
+        "minimumInstantFps",
+        "maximumInstantFps",
         "frameTimeMs",
         "frameTimeP95Ms",
         "frameTimeP99Ms",
+        "bestFrameTimeMs",
+        "worstFrameTimeMs",
+        "frameStabilityScore",
+        "framePacingScore",
+        "performanceStabilityScore",
+        "stutter25msCount",
+        "stutter50msCount",
+        "stutter100msCount",
+        "microStutterCount",
+        "slowFrameCount",
+        "frozenFrameCount",
+        "estimatedDroppedFrames",
+        "missedVsyncCount",
+        "refreshRateMismatch",
+        "fpsRefreshRatio",
         "totalFrames",
         "frameWindowFrames",
         "cpuUsage",
         "cpuFrequencyMhz",
         "cpuFrequencyMinMhz",
         "cpuFrequencyMaxMhz",
+        "cpuPolicyMinMhz",
+        "cpuPolicyMaxMhz",
+        "cpuPolicyAverageMaxMhz",
         "cpuCoreFrequenciesMhz",
+        "cpuCoreUsagePercent",
         "cpuGovernor",
+        "cpuClusterSummary",
+        "cpuThrottlePercent",
+        "cpuThrottled",
         "appPid",
         "appCpuUsage",
         "appRamMb",
         "appRssMb",
+        "appNativeHeapMb",
+        "appGraphicsMb",
+        "appThreadCount",
+        "appNice",
+        "appCpuset",
+        "appUclampMin",
+        "appUclampMax",
+        "appCpuAffinity",
+        "appSchedulerPolicy",
+        "graphicsApi",
+        "gameModeInfo",
         "socTemperatureC",
+        "cpuTemperatureC",
+        "gpuTemperatureC",
+        "thermalThrottling",
+        "thermalStabilityScore",
         "gpuModel",
+        "gpuVendor",
         "gpuSource",
         "gpuFrequencyMhz",
+        "gpuFrequencyMinMhz",
         "gpuFrequencyMaxMhz",
+        "gpuGovernor",
         "gpuLoad",
+        "gpuThrottlePercent",
+        "gpuThrottled",
         "ramUsedMb",
         "ramTotalMb",
+        "ramAvailableMb",
+        "swapUsedMb",
+        "swapTotalMb",
+        "zramUsedMb",
+        "memoryPressureAvg10",
         "batteryLevel",
         "batteryTemperatureC",
         "batteryPowerW",
@@ -412,12 +549,33 @@ fn session_csv(input: &str) -> Result<String, serde_json::Error> {
         "batteryCharging",
         "batteryCurrentMa",
         "batteryVoltageV",
+        "batteryChargeCounterMah",
+        "batteryDrainPercentPerHour",
+        "batteryDrainMahPerHour",
+        "estimatedGamingMinutes",
+        "fpsPerWatt",
         "thermalStatus",
         "refreshRateHz",
+        "networkType",
         "rxKbps",
         "txKbps",
+        "networkPingMs",
+        "networkJitterMs",
+        "networkPacketLossPercent",
+        "networkProbeTarget",
+        "wifiRssiDbm",
+        "wifiLinkSpeedMbps",
+        "wifiFrequencyMhz",
+        "wifiStandard",
+        "cellularNetworkType",
+        "cellularSignalSummary",
+        "windowWidthPx",
+        "windowHeightPx",
         "storageUsedGb",
         "storageTotalGb",
+        "collectorLatencyMs",
+        "monitorCpuUsage",
+        "monitorRamMb",
     ];
 
     let mut output = String::new();
@@ -471,6 +629,26 @@ presentToPresent histogram is as below:
         assert_eq!(result.max_frequency_mhz, Some(1000.0));
         assert_eq!(result.load_percent, Some(30.0));
     }
+    #[test]
+    fn frame_pacing_score_is_bounded() {
+        let histogram = vec![(8.0, 80), (9.0, 15), (25.0, 5)];
+        let score = frame_pacing_score(&histogram, weighted_mean_ms(&histogram)).unwrap();
+        assert!((0.0..=100.0).contains(&score));
+    }
+
+    #[test]
+    fn parses_gpu_governor_and_limits() {
+        let result = parse_gpu(
+            "cur_freq=800000000\nmin_freq=200000000\nmax_freq=1000000000\ngovernor=msm-adreno-tz\nload=75%",
+            "Adreno",
+        );
+        assert_eq!(result.frequency_mhz, Some(800.0));
+        assert_eq!(result.min_frequency_mhz, Some(200.0));
+        assert_eq!(result.max_frequency_mhz, Some(1000.0));
+        assert_eq!(result.governor.as_deref(), Some("msm-adreno-tz"));
+        assert_eq!(result.load_percent, Some(75.0));
+    }
+
     #[test]
     fn withholds_lows_until_enough_frames_exist() {
         let input = r#"

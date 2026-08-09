@@ -7,10 +7,15 @@ import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.hardware.display.DisplayManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.TrafficStats
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Debug
 import android.os.Environment
 import android.os.PowerManager
 import android.os.StatFs
@@ -23,6 +28,7 @@ import java.util.ArrayDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.ceil
 
@@ -39,7 +45,15 @@ class TelemetryCollector(context: Context) {
     private var previousAppPid = -1
     private var previousAppTicks = 0L
     private var previousSampleElapsedMs = SystemClock.elapsedRealtime()
+    private var previousMonitorCpuMs = android.os.Process.getElapsedCpuTime()
+    private var previousMonitorElapsedMs = SystemClock.elapsedRealtime()
+    private val previousCoreStats = hashMapOf<String, Pair<Long, Long>>()
+    private val batteryHistory = ArrayDeque<BatteryHistoryPoint>()
     private val surfaceFlingerEnabled = AtomicBoolean(false)
+    private val networkProbeRunning = AtomicBoolean(false)
+    private val networkProbeExecutor = Executors.newSingleThreadExecutor()
+    private var cachedPrivilegedNetwork: Map<String, Any?> = emptyMap()
+    private val lastNetworkProbeMs = AtomicLong(0L)
 
     private var cachedForegroundPackage: String? = null
     private var lastForegroundPollMs = 0L
@@ -72,6 +86,12 @@ class TelemetryCollector(context: Context) {
         val histogram: List<Pair<Double, Long>>,
     )
 
+    private data class BatteryHistoryPoint(
+        val timestampMs: Long,
+        val levelPercent: Double?,
+        val chargeCounterMah: Double?,
+    )
+
     private val frameBuckets = ArrayDeque<FrameBucket>()
 
     private val cachedGpuModel: String? by lazy<String?> {
@@ -79,7 +99,7 @@ class TelemetryCollector(context: Context) {
     }
 
     private val discoveredGpuFiles: List<File> by lazy<List<File>> {
-        val acceptedNames = (FREQUENCY_NAMES + MAX_FREQUENCY_NAMES + LOAD_NAMES)
+        val acceptedNames = (FREQUENCY_NAMES + MIN_FREQUENCY_NAMES + MAX_FREQUENCY_NAMES + LOAD_NAMES + GOVERNOR_NAMES)
             .map { it.substringAfterLast('/') }
             .toSet()
         val roots = listOf(
@@ -106,6 +126,7 @@ class TelemetryCollector(context: Context) {
     }
 
     fun collect(mode: String): HashMap<String, Any?> {
+        val collectStartedNs = SystemClock.elapsedRealtimeNanos()
         val result = hashMapOf<String, Any?>()
         val warnings = mutableListOf<String>()
         val elapsedNow = SystemClock.elapsedRealtime()
@@ -154,9 +175,13 @@ class TelemetryCollector(context: Context) {
             lastForegroundPollMs = elapsedNow
         }
         val foregroundPackage = cachedForegroundPackage
-        if (!foregroundPackage.isNullOrBlank()) result["foregroundPackage"] = foregroundPackage
+        if (!foregroundPackage.isNullOrBlank()) {
+            result["foregroundPackage"] = foregroundPackage
+            result["foregroundIsGame"] = isGamePackage(foregroundPackage)
+        }
 
         metric("cpuUsage") { cpuUsage() }
+        metrics("monitorOverhead") { monitorOverhead() }
 
         if (elapsedNow - lastCpuFrequencyPollMs >= CPU_FREQUENCY_POLL_MS || cachedCpuFrequencyInfo.isEmpty()) {
             cachedCpuFrequencyInfo = runCatching { cpuFrequencyInfo() }
@@ -297,6 +322,8 @@ class TelemetryCollector(context: Context) {
                 lastPrivilegedPackage = packageName
             }
             result.putAll(cachedPrivileged)
+            maybeScheduleNetworkProbe(backend, elapsedNow)
+            result.putAll(cachedPrivilegedNetwork)
         } else {
             cachedPrivileged.clear()
             frameBuckets.clear()
@@ -304,10 +331,16 @@ class TelemetryCollector(context: Context) {
             lastPrivilegedPackage = ""
         }
 
+        applyDerivedMetrics(result)
         result["sampleIntervalMs"] = interval
+        result["collectorLatencyMs"] = (SystemClock.elapsedRealtimeNanos() - collectStartedNs) / 1_000_000.0
         result["timestampMs"] = System.currentTimeMillis()
         if (warnings.isNotEmpty()) result["collectorWarnings"] = warnings.distinct().take(12)
         return result
+    }
+
+    fun close() {
+        runCatching { networkProbeExecutor.shutdownNow() }
     }
 
     fun status(): HashMap<String, Any?> {
@@ -376,6 +409,20 @@ class TelemetryCollector(context: Context) {
             .coerceIn(0.0, 100.0)
     }
 
+    private fun monitorOverhead(): Map<String, Any?> {
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val nowCpu = android.os.Process.getElapsedCpuTime()
+        val wallDelta = (nowElapsed - previousMonitorElapsedMs).coerceAtLeast(1L)
+        val cpuDelta = (nowCpu - previousMonitorCpuMs).coerceAtLeast(0L)
+        previousMonitorElapsedMs = nowElapsed
+        previousMonitorCpuMs = nowCpu
+        return mapOf(
+            "monitorCpuUsage" to (cpuDelta.toDouble() / wallDelta.toDouble() * 100.0)
+                .coerceIn(0.0, Runtime.getRuntime().availableProcessors() * 100.0),
+            "monitorRamMb" to Debug.getPss().toDouble() / 1024.0,
+        )
+    }
+
     private fun cpuFrequencyInfo(): Map<String, Any?> {
         val directories = buildList {
             File("/sys/devices/system/cpu/cpufreq").listFiles()
@@ -386,27 +433,69 @@ class TelemetryCollector(context: Context) {
                 ?.map { File(it, "cpufreq") }
                 ?.filter(File::isDirectory)
                 ?.let(::addAll)
-        }.distinctBy(File::getAbsolutePath)
-        val values = directories.mapNotNull { directory ->
-            sequenceOf("scaling_cur_freq", "cpuinfo_cur_freq", "scaling_max_freq")
-                .map { File(directory, it) }
-                .firstOrNull { it.canRead() }
-                ?.readText()?.trim()?.toDoubleOrNull()?.div(1000.0)
-                ?.takeIf { it > 0.0 }
-        }
+        }.distinctBy { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
+
+        fun readMhz(directory: File, names: List<String>): Double? = names.asSequence()
+            .map { File(directory, it) }
+            .firstOrNull { it.canRead() }
+            ?.readText()?.trim()?.toDoubleOrNull()?.div(1000.0)
+            ?.takeIf { it > 0.0 }
+
+        val current = directories.mapNotNull { readMhz(it, listOf("scaling_cur_freq", "cpuinfo_cur_freq")) }
+        val policyMin = directories.mapNotNull { readMhz(it, listOf("scaling_min_freq", "cpuinfo_min_freq")) }
+        val policyMax = directories.mapNotNull { readMhz(it, listOf("scaling_max_freq", "cpuinfo_max_freq")) }
         val governors = directories.mapNotNull { directory ->
             File(directory, "scaling_governor").takeIf { it.canRead() }
                 ?.readText()?.trim()?.takeIf(String::isNotBlank)
         }.distinct()
-        if (values.isEmpty()) return emptyMap()
-        return mapOf(
-            "cpuFrequencyMhz" to values.average(),
-            "cpuFrequencyMinMhz" to values.minOrNull(),
-            "cpuFrequencyMaxMhz" to values.maxOrNull(),
-            "cpuCoreFrequenciesMhz" to values,
-            "cpuGovernor" to governors.joinToString(" / ").takeIf(String::isNotBlank),
-        )
+        val clusterSummary = directories.mapIndexedNotNull { index, directory ->
+            val cur = readMhz(directory, listOf("scaling_cur_freq", "cpuinfo_cur_freq"))
+            val min = readMhz(directory, listOf("scaling_min_freq", "cpuinfo_min_freq"))
+            val max = readMhz(directory, listOf("scaling_max_freq", "cpuinfo_max_freq"))
+            val governor = runCatching { File(directory, "scaling_governor").readText().trim() }.getOrNull()?.takeIf(String::isNotBlank)
+            if (cur == null && max == null) null else buildString {
+                append("P").append(index).append(' ')
+                append(cur?.toInt() ?: 0).append('/')
+                append(min?.toInt() ?: 0).append('-').append(max?.toInt() ?: 0).append(" MHz")
+                if (governor != null) append(' ').append(governor)
+            }
+        }
+        if (current.isEmpty() && policyMax.isEmpty()) return emptyMap()
+        return buildMap {
+            if (current.isNotEmpty()) {
+                put("cpuFrequencyMhz", current.average())
+                put("cpuFrequencyMinMhz", current.minOrNull())
+                put("cpuFrequencyMaxMhz", current.maxOrNull())
+                put("cpuCoreFrequenciesMhz", current)
+            }
+            if (policyMin.isNotEmpty()) put("cpuPolicyMinMhz", policyMin.minOrNull())
+            if (policyMax.isNotEmpty()) {
+                put("cpuPolicyMaxMhz", policyMax.maxOrNull())
+                put("cpuPolicyAverageMaxMhz", policyMax.average())
+            }
+            governors.joinToString(" / ").takeIf(String::isNotBlank)?.let { put("cpuGovernor", it) }
+            clusterSummary.takeIf { it.isNotEmpty() }?.joinToString(" · ")?.let { put("cpuClusterSummary", it) }
+        }
     }
+
+    private fun isGamePackage(packageName: String): Boolean? = runCatching {
+        val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getApplicationInfo(
+                packageName,
+                android.content.pm.PackageManager.ApplicationInfoFlags.of(0),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getApplicationInfo(packageName, 0)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            info.category == ApplicationInfo.CATEGORY_GAME ||
+                (info.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+        } else {
+            @Suppress("DEPRECATION")
+            (info.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+        }
+    }.getOrNull()
 
     private fun ramInfo(): Map<String, Any?> {
         val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
@@ -423,17 +512,37 @@ class TelemetryCollector(context: Context) {
         val manager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
         val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)?.takeIf { it >= 0 }?.toDouble()
         val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, 100)?.takeIf { it > 0 } ?: 100
+        val levelPercent = level?.let { it / scale * 100.0 }
         val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)
         val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
             status == BatteryManager.BATTERY_STATUS_FULL
         val voltageMv = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0)?.takeIf { it > 0 }
         val currentUa = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
             .takeIf { it != Int.MIN_VALUE && kotlin.math.abs(it) >= 1_000 }
+        val chargeCounterUah = manager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
+            .takeIf { it != Int.MIN_VALUE && kotlin.math.abs(it) >= 1_000 }
+        val chargeCounterMah = chargeCounterUah?.div(1000.0)
         val signedPower: Double? = if (voltageMv != null && currentUa != null) {
             currentUa.toDouble() / 1_000_000.0 * voltageMv.toDouble() / 1000.0
         } else null
+        val now = SystemClock.elapsedRealtime()
+        batteryHistory.addLast(BatteryHistoryPoint(now, levelPercent, chargeCounterMah))
+        while (batteryHistory.size > 2 && now - batteryHistory.first().timestampMs > BATTERY_HISTORY_MS) {
+            batteryHistory.removeFirst()
+        }
+        val oldest = batteryHistory.firstOrNull()?.takeIf { now - it.timestampMs >= BATTERY_RATE_MIN_WINDOW_MS }
+        val hours = oldest?.let { (now - it.timestampMs).toDouble() / 3_600_000.0 }
+        val drainPercentPerHour = if (!charging && oldest?.levelPercent != null && levelPercent != null && hours != null && hours > 0) {
+            ((oldest.levelPercent - levelPercent) / hours).takeIf { it >= 0.0 && it < 200.0 }
+        } else null
+        val drainMahPerHour = if (!charging && oldest?.chargeCounterMah != null && chargeCounterMah != null && hours != null && hours > 0) {
+            ((oldest.chargeCounterMah - chargeCounterMah) / hours).takeIf { it >= 0.0 && it < 20_000.0 }
+        } else null
+        val remainingMinutes = if (!charging && levelPercent != null && drainPercentPerHour != null && drainPercentPerHour > 0.05) {
+            (levelPercent / drainPercentPerHour * 60.0).coerceIn(0.0, 24.0 * 60.0)
+        } else null
         return mapOf(
-            "batteryLevel" to level?.let { it / scale * 100.0 },
+            "batteryLevel" to levelPercent,
             "batteryTemperatureC" to intent
                 ?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
                 ?.takeIf { it != Int.MIN_VALUE }
@@ -445,6 +554,10 @@ class TelemetryCollector(context: Context) {
             "batteryCharging" to charging,
             "batteryCurrentMa" to currentUa?.div(1000.0),
             "batteryVoltageV" to voltageMv?.div(1000.0),
+            "batteryChargeCounterMah" to chargeCounterMah,
+            "batteryDrainPercentPerHour" to drainPercentPerHour,
+            "batteryDrainMahPerHour" to drainMahPerHour,
+            "estimatedGamingMinutes" to remainingMinutes,
         )
     }
 
@@ -478,7 +591,44 @@ class TelemetryCollector(context: Context) {
         previousRx = rx
         previousTx = tx
         previousNetworkMs = now
-        return mapOf("rxKbps" to rxKbps, "txKbps" to txKbps)
+
+        val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = connectivity.activeNetwork
+        val capabilities = network?.let(connectivity::getNetworkCapabilities)
+        val transport = when {
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "Wi-Fi"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Cellular"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "Ethernet"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true -> "VPN"
+            network != null -> "Other"
+            else -> "Offline"
+        }
+        val result = hashMapOf<String, Any?>(
+            "rxKbps" to rxKbps,
+            "txKbps" to txKbps,
+            "networkType" to transport,
+        )
+        if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+            runCatching {
+                @Suppress("DEPRECATION")
+                val wifi = (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager).connectionInfo
+                if (wifi.rssi > -127) result["wifiRssiDbm"] = wifi.rssi
+                if (wifi.linkSpeed > 0) result["wifiLinkSpeedMbps"] = wifi.linkSpeed
+                if (wifi.frequency > 0) result["wifiFrequencyMhz"] = wifi.frequency
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    result["wifiStandard"] = when (wifi.wifiStandard) {
+                        1 -> "802.11a/b/g"
+                        4 -> "Wi-Fi 4"
+                        5 -> "Wi-Fi 5"
+                        6 -> "Wi-Fi 6"
+                        7 -> "WiGig"
+                        8 -> "Wi-Fi 7"
+                        else -> null
+                    }
+                }
+            }
+        }
+        return result
     }
 
     private fun storageInfo(): Map<String, Any?> {
@@ -541,8 +691,10 @@ class TelemetryCollector(context: Context) {
         val lines = mutableListOf<String>()
         cachedGpuModel?.let { lines += "model=$it" }
         readFirstGpuValue(FREQUENCY_NAMES)?.let { lines += "freq=$it" }
+        readFirstGpuValue(MIN_FREQUENCY_NAMES)?.let { lines += "min_freq=$it" }
         readFirstGpuValue(MAX_FREQUENCY_NAMES)?.let { lines += "max_freq=$it" }
         readFirstGpuValue(LOAD_NAMES)?.let { lines += "load=$it" }
+        readFirstGpuValue(GOVERNOR_NAMES)?.let { lines += "governor=$it" }
         return lines.joinToString("\n")
     }
 
@@ -588,6 +740,21 @@ class TelemetryCollector(context: Context) {
                 result["cpuCoreFrequenciesMhz"] = frequencies
             }
         entries["cpuGovernor"]?.takeIf(String::isNotBlank)?.let { result["cpuGovernor"] = it }
+        entries["cpuPolicyMinListKHz"]?.split(',')
+            ?.mapNotNull { it.trim().toDoubleOrNull()?.div(1000.0) }
+            ?.filter { it > 0.0 }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { result["cpuPolicyMinMhz"] = it.minOrNull() }
+        entries["cpuPolicyMaxListKHz"]?.split(',')
+            ?.mapNotNull { it.trim().toDoubleOrNull()?.div(1000.0) }
+            ?.filter { it > 0.0 }
+            ?.takeIf { it.isNotEmpty() }
+            ?.let { values ->
+                result["cpuPolicyMaxMhz"] = values.maxOrNull()
+                result["cpuPolicyAverageMaxMhz"] = values.average()
+            }
+        entries["cpuCoreStats"]?.let(::cpuCoreUsage)?.takeIf { it.isNotEmpty() }
+            ?.let { result["cpuCoreUsagePercent"] = it }
 
         val appPid = entries["appPid"]?.toIntOrNull()
         val appTicks = entries["appProcStat"]?.let(::processTicks)
@@ -609,6 +776,29 @@ class TelemetryCollector(context: Context) {
         }
         entries["appRamKb"]?.toDoubleOrNull()?.let { result["appRamMb"] = it / 1024.0 }
         entries["appRssKb"]?.toDoubleOrNull()?.let { result["appRssMb"] = it / 1024.0 }
+        entries["appNativeHeapKb"]?.toDoubleOrNull()?.let { result["appNativeHeapMb"] = it / 1024.0 }
+        entries["appGraphicsKb"]?.toDoubleOrNull()?.let { result["appGraphicsMb"] = it / 1024.0 }
+        entries["appThreads"]?.toIntOrNull()?.let { result["appThreadCount"] = it }
+        entries["appNice"]?.toIntOrNull()?.let { result["appNice"] = it }
+        entries["appCpuset"]?.takeIf(String::isNotBlank)?.let { result["appCpuset"] = it }
+        entries["appUclampMin"]?.toDoubleOrNull()?.let { result["appUclampMin"] = it }
+        entries["appUclampMax"]?.toDoubleOrNull()?.let { result["appUclampMax"] = it }
+        entries["appAffinity"]?.takeIf(String::isNotBlank)?.let { result["appCpuAffinity"] = it }
+        entries["appScheduler"]?.takeIf(String::isNotBlank)?.let { result["appSchedulerPolicy"] = it }
+        entries["graphicsApi"]?.takeIf(String::isNotBlank)?.let { result["graphicsApi"] = it }
+        entries["gameModeInfo"]?.takeIf(String::isNotBlank)?.let { result["gameModeInfo"] = it }
+        entries["swapTotalKb"]?.toDoubleOrNull()?.let { result["swapTotalMb"] = it / 1024.0 }
+        entries["swapFreeKb"]?.toDoubleOrNull()?.let { result["swapFreeMb"] = it / 1024.0 }
+        entries["memAvailableKb"]?.toDoubleOrNull()?.let { result["ramAvailableMb"] = it / 1024.0 }
+        entries["zramUsedBytes"]?.toDoubleOrNull()?.let { result["zramUsedMb"] = it / 1024.0 / 1024.0 }
+        entries["memoryPressureAvg10"]?.toDoubleOrNull()?.let { result["memoryPressureAvg10"] = it }
+        entries["thermalZones"]?.takeIf(String::isNotBlank)?.let { result["thermalZonesRaw"] = it }
+        entries["cpuTempRaw"]?.toDoubleOrNull()?.let(::normalizeTemperatureC)?.takeIf { it in -20.0..150.0 }?.let { result["cpuTemperatureC"] = it }
+        entries["gpuTempRaw"]?.toDoubleOrNull()?.let(::normalizeTemperatureC)?.takeIf { it in -20.0..150.0 }?.let { result["gpuTemperatureC"] = it }
+        entries["windowWidth"]?.toIntOrNull()?.takeIf { it > 0 }?.let { result["windowWidthPx"] = it }
+        entries["windowHeight"]?.toIntOrNull()?.takeIf { it > 0 }?.let { result["windowHeightPx"] = it }
+        entries["cellularNetworkType"]?.takeIf(String::isNotBlank)?.let { result["cellularNetworkType"] = it }
+        entries["cellularSignalSummary"]?.takeIf(String::isNotBlank)?.let { result["cellularSignalSummary"] = it }
         entries["socTempRaw"]?.toDoubleOrNull()?.let(::normalizeTemperatureC)?.let { temperature ->
             if (temperature in -20.0..150.0) result["socTemperatureC"] = temperature
         }
@@ -661,6 +851,29 @@ class TelemetryCollector(context: Context) {
             .coerceIn(0.0, 100.0)
     }
 
+    private fun cpuCoreUsage(raw: String): List<Double> {
+        val current = linkedMapOf<String, Pair<Long, Long>>()
+        raw.split(';').forEach { entry ->
+            val pair = entry.split(':', limit = 2)
+            if (pair.size != 2) return@forEach
+            val values = pair[1].split(',').mapNotNull { it.toLongOrNull() }
+            if (values.size < 4) return@forEach
+            val idle = values[3] + values.getOrElse(4) { 0L }
+            val total = values.sum()
+            current[pair[0]] = total to idle
+        }
+        val usages = current.map { (name, stats) ->
+            val previous = previousCoreStats[name]
+            previousCoreStats[name] = stats
+            if (previous == null) return@map Double.NaN
+            val totalDelta = stats.first - previous.first
+            val idleDelta = stats.second - previous.second
+            if (totalDelta <= 0L) Double.NaN else
+                ((totalDelta - idleDelta).toDouble() / totalDelta.toDouble() * 100.0).coerceIn(0.0, 100.0)
+        }
+        return usages.filter { it.isFinite() }
+    }
+
     private fun processTicks(stat: String): Long? {
         val closingParen = stat.lastIndexOf(')')
         if (closingParen < 0 || closingParen + 2 >= stat.length) return null
@@ -694,17 +907,8 @@ class TelemetryCollector(context: Context) {
             if (result["fps"] == null && mean > 0.0) result["fps"] = 1000.0 / mean
         }
         val rolling = rollingHistogram(histogram)
-        val rollingTotal = rolling.sumOf { it.second }
-        if (rollingTotal >= 100L) {
-            tailLowFps(rolling, rollingTotal, 0.01)?.let { result["onePercentLowFps"] = it }
-        }
-        if (rollingTotal >= 1_000L) {
-            tailLowFps(rolling, rollingTotal, 0.001)?.let { result["pointOnePercentLowFps"] = it }
-        }
-        percentileMs(rolling, rollingTotal, 0.95)?.let { result["frameTimeP95Ms"] = it }
-        percentileMs(rolling, rollingTotal, 0.99)?.let { result["frameTimeP99Ms"] = it }
+        applyRollingFrameAnalytics(rolling, result)
         if (result["totalFrames"] == null && total > 0L) result["totalFrames"] = total
-        result["frameWindowFrames"] = rollingTotal
     }
 
     private fun applyGfxInfoMetrics(raw: String, result: HashMap<String, Any?>) {
@@ -725,16 +929,73 @@ class TelemetryCollector(context: Context) {
         result["frameTimeMs"] = averageMs
         result["totalFrames"] = total
         val rolling = rollingHistogram(histogram)
-        val rollingTotal = rolling.sumOf { it.second }
-        if (rollingTotal >= 100L) {
-            tailLowFps(rolling, rollingTotal, 0.01)?.let { result["onePercentLowFps"] = it }
+        applyRollingFrameAnalytics(rolling, result)
+    }
+
+    private fun applyRollingFrameAnalytics(
+        rolling: List<Pair<Double, Long>>,
+        result: HashMap<String, Any?>,
+    ) {
+        val total = rolling.sumOf { it.second }
+        if (total <= 0L) return
+        if (total >= 20L) {
+            tailLowFps(rolling, total, 0.05)?.let { result["fivePercentLowFps"] = it }
         }
-        if (rollingTotal >= 1_000L) {
-            tailLowFps(rolling, rollingTotal, 0.001)?.let { result["pointOnePercentLowFps"] = it }
+        if (total >= 100L) {
+            tailLowFps(rolling, total, 0.01)?.let { result["onePercentLowFps"] = it }
         }
-        percentileMs(rolling, rollingTotal, 0.95)?.let { result["frameTimeP95Ms"] = it }
-        percentileMs(rolling, rollingTotal, 0.99)?.let { result["frameTimeP99Ms"] = it }
-        result["frameWindowFrames"] = rollingTotal
+        if (total >= 1_000L) {
+            tailLowFps(rolling, total, 0.001)?.let { result["pointOnePercentLowFps"] = it }
+        }
+        val p50 = percentileMs(rolling, total, 0.50)
+        val p95 = percentileMs(rolling, total, 0.95)
+        val p99 = percentileMs(rolling, total, 0.99)
+        p50?.takeIf { it > 0.0 }?.let { result["medianFps"] = 1000.0 / it }
+        p95?.let { result["frameTimeP95Ms"] = it }
+        p99?.let { result["frameTimeP99Ms"] = it }
+        rolling.firstOrNull()?.first?.takeIf { it > 0.0 }?.let { best ->
+            result["bestFrameTimeMs"] = best
+            result["maximumInstantFps"] = (1000.0 / best).coerceAtMost(1000.0)
+        }
+        rolling.lastOrNull()?.first?.takeIf { it > 0.0 }?.let { worst ->
+            result["worstFrameTimeMs"] = worst
+            result["minimumInstantFps"] = (1000.0 / worst).coerceAtLeast(0.0)
+        }
+        result["stutter25msCount"] = rolling.filter { it.first >= 25.0 }.sumOf { it.second }
+        result["stutter50msCount"] = rolling.filter { it.first >= 50.0 }.sumOf { it.second }
+        result["stutter100msCount"] = rolling.filter { it.first >= 100.0 }.sumOf { it.second }
+        result["frozenFrameCount"] = rolling.filter { it.first >= 700.0 }.sumOf { it.second }
+        result["microStutterCount"] = rolling.filter { it.first in 20.0..<50.0 }.sumOf { it.second }
+        val mean = weightedMeanMs(rolling)
+        if (mean != null && p99 != null && p99 > 0.0) {
+            result["frameStabilityScore"] = (mean / p99 * 100.0).coerceIn(0.0, 100.0)
+        }
+        if (mean != null && mean > 0.0) {
+            val totalWeight = rolling.sumOf { it.second }.toDouble().coerceAtLeast(1.0)
+            val variance = rolling.sumOf { (ms, count) ->
+                val diff = ms - mean
+                diff * diff * count.toDouble()
+            } / totalWeight
+            val coefficient = kotlin.math.sqrt(variance) / mean
+            result["framePacingScore"] = (100.0 / (1.0 + coefficient * 2.0)).coerceIn(0.0, 100.0)
+        }
+        result["frameHistogramMs"] = rolling.map { (ms, count) -> listOf(ms, count) }
+        val refresh = (result["refreshRateHz"] as? Number)?.toDouble() ?: cachedRefreshRate
+        if (refresh != null && refresh > 1.0) {
+            val vsyncMs = 1000.0 / refresh
+            val missed = rolling.sumOf { (ms, count) ->
+                ((ceil(ms / vsyncMs).toLong() - 1L).coerceAtLeast(0L)) * count
+            }
+            result["estimatedDroppedFrames"] = missed
+            result["missedVsyncCount"] = missed
+            result["slowFrameCount"] = rolling.filter { it.first > vsyncMs * 1.5 }.sumOf { it.second }
+            val fps = (result["fps"] as? Number)?.toDouble()
+            if (fps != null) {
+                result["refreshRateMismatch"] = kotlin.math.abs(refresh - fps) > maxOf(5.0, refresh * 0.10)
+                result["fpsRefreshRatio"] = (fps / refresh).coerceIn(0.0, 4.0)
+            }
+        }
+        result["frameWindowFrames"] = total
     }
 
     private fun rollingHistogram(current: List<Pair<Double, Long>>): List<Pair<Double, Long>> {
@@ -800,16 +1061,30 @@ class TelemetryCollector(context: Context) {
 
         val explicitFrequency = Regex("(?im)^\\s*freq\\s*=\\s*([^\\r\\n]+)")
             .find(raw)?.groupValues?.getOrNull(1)?.let(::firstNumber)?.let(::normalizeGpuFrequency)
+        val explicitMinFrequency = Regex("(?im)^\\s*min_freq\\s*=\\s*([^\\r\\n]+)")
+            .find(raw)?.groupValues?.getOrNull(1)?.let(::firstNumber)?.let(::normalizeGpuFrequency)
         val explicitMaxFrequency = Regex("(?im)^\\s*max_freq\\s*=\\s*([^\\r\\n]+)")
             .find(raw)?.groupValues?.getOrNull(1)?.let(::firstNumber)?.let(::normalizeGpuFrequency)
         val fallbackFrequency = raw.lineSequence().firstOrNull { line ->
             val lower = line.lowercase()
-            (lower.contains("freq") || lower.contains("clock")) && !lower.contains("max")
+            (lower.contains("freq") || lower.contains("clock")) && !lower.contains("max") && !lower.contains("min")
         }?.let(::firstNumber)?.let(::normalizeGpuFrequency)
         (explicitFrequency ?: fallbackFrequency)?.takeIf { it in 1.0..10_000.0 }
             ?.let { result["gpuFrequencyMhz"] = it }
+        explicitMinFrequency?.takeIf { it in 1.0..10_000.0 }
+            ?.let { result["gpuFrequencyMinMhz"] = it }
         explicitMaxFrequency?.takeIf { it in 1.0..10_000.0 }
             ?.let { result["gpuFrequencyMaxMhz"] = it }
+        Regex("(?im)^\\s*governor\\s*=\\s*([^\\r\\n]+)").find(raw)
+            ?.groupValues?.getOrNull(1)?.trim()?.takeIf { it.isNotBlank() }
+            ?.let { result["gpuGovernor"] = it }
+        val gpuText = (result["gpuModel"] as? String).orEmpty().lowercase()
+        when {
+            "adreno" in gpuText || "qualcomm" in gpuText -> result["gpuVendor"] = "Qualcomm"
+            "mali" in gpuText || "immortalis" in gpuText -> result["gpuVendor"] = "Arm"
+            "powervr" in gpuText || "pvr" in gpuText -> result["gpuVendor"] = "Imagination"
+            gpuText.isNotBlank() -> result["gpuVendor"] = "Unknown"
+        }
 
         val explicitLoad = Regex("(?im)^\\s*load\\s*=\\s*([^\\r\\n]+)")
             .find(raw)?.groupValues?.getOrNull(1)?.let(::gpuLoadPercent)
@@ -836,6 +1111,94 @@ class TelemetryCollector(context: Context) {
         return if (numbers.size >= 2 && !value.contains('%') && numbers[1] > 0.0) {
             numbers[0] / numbers[1] * 100.0
         } else numbers[0]
+    }
+
+    private fun applyDerivedMetrics(result: HashMap<String, Any?>) {
+        val swapTotal = (result["swapTotalMb"] as? Number)?.toDouble()
+        val swapFree = (result["swapFreeMb"] as? Number)?.toDouble()
+        if (swapTotal != null && swapFree != null) {
+            result["swapUsedMb"] = (swapTotal - swapFree).coerceAtLeast(0.0)
+        }
+
+        val thermalStatus = (result["thermalStatus"] as? Number)?.toInt() ?: 0
+        val socTemp = (result["socTemperatureC"] as? Number)?.toDouble()
+        val thermalEvidence = thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE || (socTemp ?: 0.0) >= 45.0
+
+        val cpuLoad = (result["cpuUsage"] as? Number)?.toDouble()
+        val cpuCurrent = (result["cpuFrequencyMhz"] as? Number)?.toDouble()
+        val cpuReference = (result["cpuPolicyAverageMaxMhz"] as? Number)?.toDouble()
+            ?: (result["cpuPolicyMaxMhz"] as? Number)?.toDouble()
+        if (cpuCurrent != null && cpuReference != null && cpuReference > 0.0) {
+            val headroom = ((1.0 - cpuCurrent / cpuReference) * 100.0).coerceIn(0.0, 100.0)
+            result["cpuThrottlePercent"] = headroom
+            result["cpuThrottled"] = headroom >= 35.0 && (cpuLoad ?: 0.0) >= 85.0 && thermalEvidence
+        }
+
+        val gpuLoad = (result["gpuLoad"] as? Number)?.toDouble()
+        val gpuCurrent = (result["gpuFrequencyMhz"] as? Number)?.toDouble()
+        val gpuMax = (result["gpuFrequencyMaxMhz"] as? Number)?.toDouble()
+        if (gpuCurrent != null && gpuMax != null && gpuMax > 0.0) {
+            val headroom = ((1.0 - gpuCurrent / gpuMax) * 100.0).coerceIn(0.0, 100.0)
+            result["gpuThrottlePercent"] = headroom
+            result["gpuThrottled"] = headroom >= 35.0 && (gpuLoad ?: 0.0) >= 90.0 && thermalEvidence
+        }
+
+        val thermalThrottle = result["cpuThrottled"] == true || result["gpuThrottled"] == true ||
+            thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE || (socTemp ?: 0.0) >= 52.0
+        result["thermalThrottling"] = thermalThrottle
+        var thermalScore = 100.0 - thermalStatus.coerceIn(0, 6) * 11.0
+        if (result["cpuThrottled"] == true) thermalScore -= 12.0
+        if (result["gpuThrottled"] == true) thermalScore -= 12.0
+        val thermalStability = thermalScore.coerceIn(0.0, 100.0)
+        result["thermalStabilityScore"] = thermalStability
+
+        val frameStability = (result["frameStabilityScore"] as? Number)?.toDouble()
+        val framePacing = (result["framePacingScore"] as? Number)?.toDouble()
+        val stabilityInputs = listOfNotNull(frameStability, framePacing, thermalStability)
+        if (stabilityInputs.isNotEmpty()) {
+            var performanceStability = stabilityInputs.average()
+            val packetLoss = (result["networkPacketLossPercent"] as? Number)?.toDouble() ?: 0.0
+            if (packetLoss >= 3.0) performanceStability -= (packetLoss.coerceAtMost(20.0) * 0.5)
+            if (thermalThrottle) performanceStability -= 5.0
+            result["performanceStabilityScore"] = performanceStability.coerceIn(0.0, 100.0)
+        }
+
+        val fps = (result["fps"] as? Number)?.toDouble()
+        val power = (result["batteryPowerW"] as? Number)?.toDouble()
+        if (fps != null && power != null && power > 0.05 && result["batteryCharging"] != true) {
+            result["fpsPerWatt"] = fps / power
+        }
+    }
+
+    private fun maybeScheduleNetworkProbe(backend: Backend, elapsedNow: Long) {
+        if (elapsedNow - lastNetworkProbeMs.get() < NETWORK_PROBE_POLL_MS) return
+        if (!networkProbeRunning.compareAndSet(false, true)) return
+        lastNetworkProbeMs.set(elapsedNow)
+        networkProbeExecutor.execute {
+            try {
+                val raw = backend.execute(NETWORK_PROBE_COMMAND).orEmpty()
+                val parsed = hashMapOf<String, Any?>()
+                raw.lineSequence().forEach { line ->
+                    val separator = line.indexOf('=')
+                    if (separator <= 0) return@forEach
+                    val key = line.substring(0, separator).trim()
+                    val value = line.substring(separator + 1).trim()
+                    when (key) {
+                        "networkPingMs" -> value.toDoubleOrNull()?.let { parsed[key] = it }
+                        "networkJitterMs" -> value.toDoubleOrNull()?.let { parsed[key] = it }
+                        "networkPacketLossPercent" -> value.toDoubleOrNull()?.let { parsed[key] = it }
+                        "networkProbeTarget" -> value.takeIf { it.isNotBlank() }?.let { parsed[key] = it }
+                        "wifiRssiDbm" -> value.toIntOrNull()?.let { parsed[key] = it }
+                        "wifiLinkSpeedMbps" -> value.toDoubleOrNull()?.let { parsed[key] = it }
+                        "wifiFrequencyMhz" -> value.toDoubleOrNull()?.let { parsed[key] = it }
+                        "cellularNetworkType", "cellularSignalSummary" -> value.takeIf { it.isNotBlank() }?.let { parsed[key] = it }
+                    }
+                }
+                if (parsed.isNotEmpty()) cachedPrivilegedNetwork = parsed
+            } finally {
+                networkProbeRunning.set(false)
+            }
+        }
     }
 
     private fun normalizeTemperatureC(raw: Double): Double = when {
@@ -869,6 +1232,8 @@ class TelemetryCollector(context: Context) {
 
     private fun privilegedSystemCommand(packageName: String, includeSlowMetrics: Boolean): String = """
         echo "cpuStat=${'$'}(head -n 1 /proc/stat 2>/dev/null)"
+        cpu_core_stats=${'$'}(awk '/^cpu[0-9]+ / {printf "%s:",${'$'}1; for(i=2;i<=NF;i++){if(i>2)printf ",";printf "%s",${'$'}i}; printf ";"}' /proc/stat 2>/dev/null)
+        [ -n "${'$'}cpu_core_stats" ] && echo "cpuCoreStats=${'$'}cpu_core_stats"
         cpu_freqs=${'$'}(
           for p in /sys/devices/system/cpu/cpufreq/policy* /sys/devices/system/cpu/cpu*/cpufreq; do
             [ -d "${'$'}p" ] || continue
@@ -878,6 +1243,10 @@ class TelemetryCollector(context: Context) {
           done | awk 'BEGIN { first=1 } ${'$'}1 + 0 > 0 { if (!first) printf ","; printf "%s", ${'$'}1; first=0 } END { print "" }'
         )
         [ -n "${'$'}cpu_freqs" ] && echo "cpuFreqListKHz=${'$'}cpu_freqs"
+        cpu_min_freqs=${'$'}(for f in /sys/devices/system/cpu/cpufreq/policy*/scaling_min_freq; do [ -r "${'$'}f" ] && cat "${'$'}f"; done | paste -sd, -)
+        cpu_max_freqs=${'$'}(for f in /sys/devices/system/cpu/cpufreq/policy*/scaling_max_freq; do [ -r "${'$'}f" ] && cat "${'$'}f"; done | paste -sd, -)
+        [ -n "${'$'}cpu_min_freqs" ] && echo "cpuPolicyMinListKHz=${'$'}cpu_min_freqs"
+        [ -n "${'$'}cpu_max_freqs" ] && echo "cpuPolicyMaxListKHz=${'$'}cpu_max_freqs"
         cpu_governor=${'$'}(for f in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do [ -r "${'$'}f" ] && cat "${'$'}f"; done | sort -u | paste -sd/ -)
         [ -n "${'$'}cpu_governor" ] && echo "cpuGovernor=${'$'}cpu_governor"
 
@@ -890,26 +1259,89 @@ class TelemetryCollector(context: Context) {
             [ -n "${'$'}app_stat" ] && echo "appProcStat=${'$'}app_stat"
             app_rss=${'$'}(awk '/^VmRSS:/ {print ${'$'}2; exit}' "/proc/${'$'}pid/status" 2>/dev/null)
             [ -n "${'$'}app_rss" ] && echo "appRssKb=${'$'}app_rss"
+            app_threads=${'$'}(awk '/^Threads:/ {print ${'$'}2; exit}' "/proc/${'$'}pid/status" 2>/dev/null)
+            [ -n "${'$'}app_threads" ] && echo "appThreads=${'$'}app_threads"
+            app_cpuset=${'$'}(cat "/proc/${'$'}pid/cpuset" 2>/dev/null)
+            [ -n "${'$'}app_cpuset" ] && echo "appCpuset=${'$'}app_cpuset"
+            app_nice=${'$'}(ps -p "${'$'}pid" -o ni= 2>/dev/null | tr -d ' ' | head -n 1)
+            [ -n "${'$'}app_nice" ] && echo "appNice=${'$'}app_nice"
+            app_uclamp_min=${'$'}(awk '/uclamp\.min/ {print ${'$'}3; exit}' "/proc/${'$'}pid/sched" 2>/dev/null)
+            app_uclamp_max=${'$'}(awk '/uclamp\.max/ {print ${'$'}3; exit}' "/proc/${'$'}pid/sched" 2>/dev/null)
+            [ -n "${'$'}app_uclamp_min" ] && echo "appUclampMin=${'$'}app_uclamp_min"
+            [ -n "${'$'}app_uclamp_max" ] && echo "appUclampMax=${'$'}app_uclamp_max"
+            app_affinity=${'$'}(taskset -p "${'$'}pid" 2>/dev/null | awk -F: 'NF>1 {gsub(/ /,"",${'$'}2); print ${'$'}2; exit}')
+            [ -n "${'$'}app_affinity" ] && echo "appAffinity=${'$'}app_affinity"
+            app_scheduler=${'$'}(chrt -p "${'$'}pid" 2>/dev/null | awk -F: '/policy/ {gsub(/^[ \t]+|[ \t]+${'$'}/,"",${'$'}2); print ${'$'}2; exit}')
+            [ -n "${'$'}app_scheduler" ] && echo "appScheduler=${'$'}app_scheduler"
             if [ "${if (includeSlowMetrics) 1 else 0}" = "1" ]; then
-              app_pss=${'$'}(dumpsys meminfo "${'$'}pkg" 2>/dev/null | awk '/TOTAL PSS:/ {print ${'$'}3; exit} /^TOTAL[[:space:]]/ {print ${'$'}2; exit}')
+              graphics_api=${'$'}(grep -m1 -E 'libvulkan|vulkan\.' "/proc/${'$'}pid/maps" 2>/dev/null >/dev/null && echo Vulkan)
+              if [ -z "${'$'}graphics_api" ]; then graphics_api=${'$'}(grep -m1 -E 'libGLES|libEGL' "/proc/${'$'}pid/maps" 2>/dev/null >/dev/null && echo "OpenGL ES"); fi
+              [ -n "${'$'}graphics_api" ] && echo "graphicsApi=${'$'}graphics_api"
+              game_mode_info=${'$'}(cmd game list-modes "${'$'}pkg" 2>/dev/null | head -n 1 | tr '\n' ' ')
+              [ -n "${'$'}game_mode_info" ] && echo "gameModeInfo=${'$'}game_mode_info"
+              window_frame=${'$'}(dumpsys window windows 2>/dev/null | awk -v pkg="${'$'}pkg" '
+                index(${'$'}0,pkg){hit=1;lines=0}
+                hit && match(${'$'}0,/mFrame=\[[0-9-]+,[0-9-]+\]\[[0-9-]+,[0-9-]+\]/){print substr(${'$'}0,RSTART,RLENGTH);exit}
+                hit{lines++; if(lines>80) hit=0}
+              ')
+              if [ -n "${'$'}window_frame" ]; then
+                dims=${'$'}(printf "%s" "${'$'}window_frame" | sed -n 's/.*\[\([0-9-]*\),\([0-9-]*\)\]\[\([0-9-]*\),\([0-9-]*\)\].*/\1 \2 \3 \4/p')
+                set -- ${'$'}dims
+                if [ "${'$'}#" -eq 4 ]; then
+                  width=${'$'}((${'$'}3-${'$'}1)); height=${'$'}((${'$'}4-${'$'}2))
+                  [ "${'$'}width" -gt 0 ] 2>/dev/null && echo "windowWidth=${'$'}width"
+                  [ "${'$'}height" -gt 0 ] 2>/dev/null && echo "windowHeight=${'$'}height"
+                fi
+              fi
+              meminfo=${'$'}(dumpsys meminfo "${'$'}pkg" 2>/dev/null)
+              app_pss=${'$'}(printf "%s\n" "${'$'}meminfo" | awk '/TOTAL PSS:/ {print ${'$'}3; exit} /^TOTAL[[:space:]]/ {print ${'$'}2; exit}')
               [ -z "${'$'}app_pss" ] && app_pss=${'$'}app_rss
               [ -n "${'$'}app_pss" ] && echo "appRamKb=${'$'}app_pss"
+              native_heap=${'$'}(printf "%s\n" "${'$'}meminfo" | awk -F: '/Native Heap:/ {gsub(/[^0-9.]/,"",${'$'}2); print ${'$'}2; exit}')
+              graphics_mem=${'$'}(printf "%s\n" "${'$'}meminfo" | awk -F: '/Graphics:/ {gsub(/[^0-9.]/,"",${'$'}2); print ${'$'}2; exit}')
+              [ -n "${'$'}native_heap" ] && echo "appNativeHeapKb=${'$'}native_heap"
+              [ -n "${'$'}graphics_mem" ] && echo "appGraphicsKb=${'$'}graphics_mem"
               app_cpu=${'$'}(dumpsys cpuinfo 2>/dev/null | awk -v pkg="${'$'}pkg" 'index(${'$'}0, pkg) {gsub(/%/, "", ${'$'}1); print ${'$'}1; exit}')
               [ -n "${'$'}app_cpu" ] && echo "appCpuInstant=${'$'}app_cpu"
             fi
           fi
         fi
 
-        max_temp=0
-        for z in /sys/class/thermal/thermal_zone*; do
+        if [ "${if (includeSlowMetrics) 1 else 0}" = "1" ]; then
+          swap_total=${'$'}(awk '/^SwapTotal:/ {print ${'$'}2; exit}' /proc/meminfo 2>/dev/null)
+          swap_free=${'$'}(awk '/^SwapFree:/ {print ${'$'}2; exit}' /proc/meminfo 2>/dev/null)
+          mem_available=${'$'}(awk '/^MemAvailable:/ {print ${'$'}2; exit}' /proc/meminfo 2>/dev/null)
+          [ -n "${'$'}swap_total" ] && echo "swapTotalKb=${'$'}swap_total"
+          [ -n "${'$'}swap_free" ] && echo "swapFreeKb=${'$'}swap_free"
+          [ -n "${'$'}mem_available" ] && echo "memAvailableKb=${'$'}mem_available"
+          zram_used=${'$'}(awk '{print ${'$'}3; exit}' /sys/block/zram0/mm_stat 2>/dev/null)
+          [ -z "${'$'}zram_used" ] && zram_used=${'$'}(cat /sys/block/zram0/mem_used_total 2>/dev/null)
+          [ -n "${'$'}zram_used" ] && echo "zramUsedBytes=${'$'}zram_used"
+          mem_pressure=${'$'}(awk '/^some / {for(i=1;i<=NF;i++) if(${'$'}i ~ /^avg10=/){split(${'$'}i,a,"=");print a[2];exit}}' /proc/pressure/memory 2>/dev/null)
+          [ -n "${'$'}mem_pressure" ] && echo "memoryPressureAvg10=${'$'}mem_pressure"
+        fi
+
+        if [ "${if (includeSlowMetrics) 1 else 0}" = "1" ]; then
+          max_temp=0
+          cpu_temp=0
+          gpu_temp=0
+          thermal_zones=""
+          for z in /sys/class/thermal/thermal_zone*; do
           [ -r "${'$'}z/temp" ] || continue
           zone_type=${'$'}(cat "${'$'}z/type" 2>/dev/null | tr '[:upper:]' '[:lower:]')
-          case "${'$'}zone_type" in *battery*|*charger*|*usb*) continue ;; esac
           value=${'$'}(cat "${'$'}z/temp" 2>/dev/null)
           case "${'$'}value" in ''|*[!0-9-]*) continue ;; esac
+          thermal_zones="${'$'}thermal_zones${'$'}zone_type:${'$'}value;"
+          case "${'$'}zone_type" in *gpu*|*mali*|*kgsl*|*g3d*) if [ "${'$'}value" -gt "${'$'}gpu_temp" ] 2>/dev/null; then gpu_temp=${'$'}value; fi ;; esac
+          case "${'$'}zone_type" in *cpu*|*soc*|*ap_*|*cluster*) if [ "${'$'}value" -gt "${'$'}cpu_temp" ] 2>/dev/null; then cpu_temp=${'$'}value; fi ;; esac
+          case "${'$'}zone_type" in *battery*|*charger*|*usb*) continue ;; esac
           if [ "${'$'}value" -gt "${'$'}max_temp" ] 2>/dev/null; then max_temp=${'$'}value; fi
         done
-        [ "${'$'}max_temp" -gt 0 ] 2>/dev/null && echo "socTempRaw=${'$'}max_temp"
+          [ "${'$'}max_temp" -gt 0 ] 2>/dev/null && echo "socTempRaw=${'$'}max_temp"
+          [ "${'$'}cpu_temp" -gt 0 ] 2>/dev/null && echo "cpuTempRaw=${'$'}cpu_temp"
+          [ "${'$'}gpu_temp" -gt 0 ] 2>/dev/null && echo "gpuTempRaw=${'$'}gpu_temp"
+          [ -n "${'$'}thermal_zones" ] && echo "thermalZones=${'$'}thermal_zones"
+        fi
 
         battery=/sys/class/power_supply/battery
         [ -r "${'$'}battery/status" ] && echo "batteryStatus=${'$'}(cat "${'$'}battery/status" 2>/dev/null)"
@@ -954,20 +1386,32 @@ class TelemetryCollector(context: Context) {
         private const val STORAGE_POLL_MS = 5_000L
         private const val LOCAL_GPU_POLL_MS = 200L
         private const val PRIVILEGED_POLL_MS = 200L
-        private const val SLOW_PRIVILEGED_POLL_MS = 1_500L
-        private const val FRAME_POLL_MS = 1_000L
+        private const val SLOW_PRIVILEGED_POLL_MS = 1_000L
+        private const val FRAME_POLL_MS = 250L
         private const val FRAME_WINDOW_MS = 30_000L
+        private const val BATTERY_HISTORY_MS = 5 * 60_000L
+        private const val BATTERY_RATE_MIN_WINDOW_MS = 30_000L
+        private const val NETWORK_PROBE_POLL_MS = 5_000L
         private val FRAME_KEYS = setOf(
-            "surfaceFlingerRaw", "fpsSource", "fps", "onePercentLowFps",
-            "pointOnePercentLowFps", "frameTimeMs", "frameTimeP95Ms",
-            "frameTimeP99Ms", "totalFrames", "frameWindowFrames",
+            "surfaceFlingerRaw", "fpsSource", "fps", "fivePercentLowFps", "onePercentLowFps",
+            "pointOnePercentLowFps", "medianFps", "minimumInstantFps", "maximumInstantFps",
+            "frameTimeMs", "frameTimeP95Ms", "frameTimeP99Ms", "bestFrameTimeMs", "worstFrameTimeMs",
+            "frameStabilityScore", "framePacingScore", "stutter25msCount", "stutter50msCount", "stutter100msCount",
+            "microStutterCount", "slowFrameCount", "frozenFrameCount", "estimatedDroppedFrames", "missedVsyncCount",
+            "refreshRateMismatch", "fpsRefreshRatio", "totalFrames", "frameWindowFrames", "frameHistogramMs",
         )
         private val PACKAGE_NAME = Regex("^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)+$")
         private val FREQUENCY_NAMES = listOf(
             "gpuclk", "cur_freq", "clock", "scaling_cur_freq", "devfreq/cur_freq", "current_freqency",
         )
+        private val MIN_FREQUENCY_NAMES = listOf(
+            "min_gpuclk", "min_freq", "scaling_min_freq", "devfreq/min_freq",
+        )
         private val MAX_FREQUENCY_NAMES = listOf(
             "max_gpuclk", "max_freq", "scaling_max_freq", "devfreq/max_freq",
+        )
+        private val GOVERNOR_NAMES = listOf(
+            "governor", "scaling_governor", "devfreq/governor",
         )
         private val LOAD_NAMES = listOf(
             "gpubusy", "load", "utilization", "gpu_busy_percentage", "busy", "gpu_utilization",
@@ -986,6 +1430,29 @@ class TelemetryCollector(context: Context) {
                   split(${'$'}i, a, "/"); print a[1]; exit
                 }
               }'
+        """.trimIndent()
+
+        private val NETWORK_PROBE_COMMAND = """
+            target=${'$'}(ip route show default 2>/dev/null | awk 'NR==1 {print ${'$'}3}')
+            [ -z "${'$'}target" ] && target=1.1.1.1
+            echo "networkProbeTarget=${'$'}target"
+            ping_out=${'$'}(ping -c 3 -i 0.2 -W 1 "${'$'}target" 2>/dev/null)
+            loss=${'$'}(printf "%s\n" "${'$'}ping_out" | sed -n 's/.* \([0-9.]*\)% packet loss.*/\1/p' | tail -n 1)
+            stats=${'$'}(printf "%s\n" "${'$'}ping_out" | sed -n 's/.*= \([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\)\/\([0-9.]*\).*/\1 \2 \3 \4/p' | tail -n 1)
+            [ -n "${'$'}loss" ] && echo "networkPacketLossPercent=${'$'}loss"
+            if [ -n "${'$'}stats" ]; then
+              set -- ${'$'}stats
+              echo "networkPingMs=${'$'}2"
+              echo "networkJitterMs=${'$'}4"
+            fi
+            cellular_type=${'$'}(getprop gsm.network.type 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+            [ -n "${'$'}cellular_type" ] && echo "cellularNetworkType=${'$'}cellular_type"
+            cellular_signal=${'$'}(dumpsys telephony.registry 2>/dev/null | grep -m1 -E 'mSignalStrength|SignalStrength' | tr '=' ':' | tr '\n' ' ' | cut -c1-240)
+            [ -n "${'$'}cellular_signal" ] && echo "cellularSignalSummary=${'$'}cellular_signal"
+            wifi_dump=${'$'}(dumpsys wifi 2>/dev/null | head -n 500)
+            printf "%s\n" "${'$'}wifi_dump" | sed -n 's/.*RSSI[^-0-9]*\(-[0-9][0-9]*\).*/wifiRssiDbm=\1/p' | head -n 1
+            printf "%s\n" "${'$'}wifi_dump" | sed -n 's/.*Link speed[^0-9]*\([0-9][0-9.]*\).*/wifiLinkSpeedMbps=\1/p' | head -n 1
+            printf "%s\n" "${'$'}wifi_dump" | sed -n 's/.*Frequency[^0-9]*\([0-9][0-9]*\).*/wifiFrequencyMhz=\1/p' | head -n 1
         """.trimIndent()
 
         private fun privilegedGpuCommand(includeSlowMetrics: Boolean): String = """
@@ -1007,6 +1474,16 @@ class TelemetryCollector(context: Context) {
               if [ -r "${'$'}f" ]; then echo "freq=${'$'}(cat "${'$'}f" 2>/dev/null)"; break; fi
             done
             for f in \
+              /sys/class/kgsl/kgsl-3d0/min_gpuclk \
+              /sys/class/kgsl/kgsl-3d0/devfreq/min_freq \
+              /sys/class/devfreq/*kgsl*/min_freq \
+              /sys/class/devfreq/*gpu*/min_freq \
+              /sys/class/devfreq/*mali*/min_freq \
+              /sys/devices/platform/*gpu*/devfreq/*/min_freq \
+              /sys/devices/platform/*mali*/devfreq/*/min_freq; do
+              if [ -r "${'$'}f" ]; then echo "min_freq=${'$'}(cat "${'$'}f" 2>/dev/null)"; break; fi
+            done
+            for f in \
               /sys/class/kgsl/kgsl-3d0/max_gpuclk \
               /sys/class/kgsl/kgsl-3d0/devfreq/max_freq \
               /sys/class/devfreq/*kgsl*/max_freq \
@@ -1015,6 +1492,15 @@ class TelemetryCollector(context: Context) {
               /sys/devices/platform/*gpu*/devfreq/*/max_freq \
               /sys/devices/platform/*mali*/devfreq/*/max_freq; do
               if [ -r "${'$'}f" ]; then echo "max_freq=${'$'}(cat "${'$'}f" 2>/dev/null)"; break; fi
+            done
+            for f in \
+              /sys/class/kgsl/kgsl-3d0/devfreq/governor \
+              /sys/class/devfreq/*kgsl*/governor \
+              /sys/class/devfreq/*gpu*/governor \
+              /sys/class/devfreq/*mali*/governor \
+              /sys/devices/platform/*gpu*/devfreq/*/governor \
+              /sys/devices/platform/*mali*/devfreq/*/governor; do
+              if [ -r "${'$'}f" ]; then echo "governor=${'$'}(cat "${'$'}f" 2>/dev/null)"; break; fi
             done
             for f in \
               /sys/class/kgsl/kgsl-3d0/gpubusy \

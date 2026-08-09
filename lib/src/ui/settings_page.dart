@@ -13,499 +13,230 @@ class SettingsPage extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
       children: [
-        Text(
-          'Settings & access',
-          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w900,
-                letterSpacing: -1,
-              ),
-        ),
+        Text('Settings', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900, letterSpacing: -1)),
         const SizedBox(height: 6),
-        Text(
-          'FPSWatcher uses only Shizuku or Root. Shizuku is the non-root option; Root unlocks the widest process, GPU, thermal and power coverage.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Colors.white54,
-              ),
-        ),
+        Text('Tune the privileged backend, dashboard sampling and every in-game overlay metric.', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white54)),
         const SizedBox(height: 18),
-        _SectionLabel('ACCESS BACKEND'),
-        const SizedBox(height: 10),
-        RadioGroup<AccessMode>(
-          groupValue: controller.accessMode,
-          onChanged: (value) {
-            if (value != null) controller.setAccessMode(value);
-          },
-          child: Column(
-            children: AccessMode.values
-                .map(
-                  (mode) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Card(
-                      child: RadioListTile<AccessMode>(
-                        value: mode,
-                        selected: mode == controller.accessMode,
-                        title: Text(mode.label),
-                        subtitle: Text(_description(mode)),
-                      ),
-                    ),
-                  ),
-                )
-                .toList(growable: false),
-          ),
+        _Label('TELEMETRY BACKEND'),
+        const SizedBox(height: 9),
+        SegmentedButton<AccessMode>(
+          segments: const [
+            ButtonSegment(value: AccessMode.shizuku, label: Text('Shizuku'), icon: Icon(Icons.admin_panel_settings_outlined)),
+            ButtonSegment(value: AccessMode.root, label: Text('Root'), icon: Icon(Icons.security_outlined)),
+          ],
+          selected: {controller.accessMode},
+          onSelectionChanged: (selection) => controller.setAccessMode(selection.first),
         ),
-        const SizedBox(height: 16),
-        _SectionLabel('DASHBOARD REFRESH'),
         const SizedBox(height: 10),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Live UI interval',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '100 ms gives the fastest dashboard response. FPS and low-percentile statistics still use a longer frame window to avoid meaningless spikes.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.white54,
-                      ),
-                ),
-                const SizedBox(height: 12),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment(value: 100, label: Text('100 ms')),
-                      ButtonSegment(value: 200, label: Text('200 ms')),
-                      ButtonSegment(value: 500, label: Text('500 ms')),
-                      ButtonSegment(value: 1000, label: Text('1 s')),
-                    ],
-                    selected: {controller.refreshIntervalMs},
-                    onSelectionChanged: (values) =>
-                        controller.setRefreshInterval(values.first),
-                    showSelectedIcon: false,
-                  ),
-                ),
-              ],
+            child: Text(
+              controller.accessMode == AccessMode.root
+                  ? 'Root is the widest backend for sysfs, thermal zones, process scheduling, GPU devfreq and raw kernel telemetry.'
+                  : 'Shizuku runs privileged shell telemetry without root. Availability still depends on Android and vendor restrictions.',
+              style: const TextStyle(color: Colors.white60, height: 1.35),
             ),
           ),
         ),
         const SizedBox(height: 18),
-        _SectionLabel('OVERLAY APPEARANCE'),
-        const SizedBox(height: 10),
+        _Label('DASHBOARD SAMPLING'),
+        const SizedBox(height: 9),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Square in-game overlay',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'The overlay has sharp corners and remembers the position where you drag it.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Colors.white54,
-                      ),
-                ),
-                const SizedBox(height: 16),
-                _OverlayPreview(preferences: overlay),
-                const SizedBox(height: 18),
-                _SliderRow(
-                  label: 'Text size',
-                  valueLabel: '${overlay.textSizeSp.toStringAsFixed(0)} sp',
-                  value: overlay.textSizeSp,
-                  min: 10,
-                  max: 24,
-                  divisions: 14,
-                  onChanged: (value) => controller.updateOverlayPreferences(
-                    overlay.copyWith(textSizeSp: value),
-                  ),
-                ),
-                _SliderRow(
-                  label: 'Background opacity',
-                  valueLabel: '${(overlay.opacity * 100).round()}%',
-                  value: overlay.opacity,
-                  min: 0.15,
-                  max: 1,
-                  divisions: 15,
-                  onChanged: (value) => controller.updateOverlayPreferences(
-                    overlay.copyWith(opacity: value),
-                  ),
-                ),
-                _SliderRow(
-                  label: 'Padding',
-                  valueLabel: '${overlay.paddingDp} dp',
-                  value: overlay.paddingDp.toDouble(),
-                  min: 0,
-                  max: 24,
-                  divisions: 12,
-                  onChanged: (value) => controller.updateOverlayPreferences(
-                    overlay.copyWith(paddingDp: value.round()),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text('Text color', style: Theme.of(context).textTheme.labelLarge),
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment(value: 0xFFFFFFFF, label: Text('White')),
-                      ButtonSegment(value: 0xFF39E7D0, label: Text('Cyan')),
-                      ButtonSegment(value: 0xFF7CFF84, label: Text('Green')),
-                      ButtonSegment(value: 0xFFFFD65A, label: Text('Yellow')),
-                    ],
-                    selected: {overlay.textColorValue},
-                    onSelectionChanged: (values) =>
-                        controller.updateOverlayPreferences(
-                      overlay.copyWith(textColorValue: values.first),
-                    ),
-                    showSelectedIcon: false,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Text('Overlay refresh', style: Theme.of(context).textTheme.labelLarge),
-                const SizedBox(height: 8),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment(value: 100, label: Text('100 ms')),
-                      ButtonSegment(value: 200, label: Text('200 ms')),
-                      ButtonSegment(value: 500, label: Text('500 ms')),
-                    ],
-                    selected: {overlay.refreshIntervalMs},
-                    onSelectionChanged: (values) =>
-                        controller.updateOverlayPreferences(
-                      overlay.copyWith(refreshIntervalMs: values.first),
-                    ),
-                    showSelectedIcon: false,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: controller.resetOverlayPosition,
-                    icon: const Icon(Icons.center_focus_strong_outlined),
-                    label: const Text('Reset overlay position'),
-                  ),
-                ),
-              ],
-            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Wrap(
+                spacing: 8,
+                children: [100, 200, 500, 1000].map((ms) => ChoiceChip(
+                      label: Text('$ms ms'),
+                      selected: controller.refreshIntervalMs == ms,
+                      onSelected: (_) => controller.setRefreshInterval(ms),
+                    )).toList(growable: false),
+              ),
+              const SizedBox(height: 8),
+              const Text('Fast counters are sampled frequently; expensive process, memory and network probes are internally rate-limited.', style: TextStyle(color: Colors.white54, fontSize: 12)),
+            ]),
           ),
         ),
         const SizedBox(height: 18),
-        _SectionLabel('OVERLAY METRICS'),
-        const SizedBox(height: 10),
-        Card(
-          child: Column(
-            children: [
-              _MetricSwitch(
-                title: 'Show only when a foreground app is detected',
-                value: overlay.showOnlyWhenGameDetected,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showOnlyWhenGameDetected: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'FPS',
-                value: overlay.showFps,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showFps: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: '1% low and 0.1% low',
-                value: overlay.showLows,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showLows: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'Frame time and P95',
-                value: overlay.showFrameTime,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showFrameTime: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'System CPU usage',
-                value: overlay.showSystemCpu,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showSystemCpu: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'Game CPU usage',
-                value: overlay.showAppCpu,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showAppCpu: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'CPU frequency',
-                value: overlay.showCpuFrequency,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showCpuFrequency: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'GPU usage',
-                value: overlay.showGpuLoad,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showGpuLoad: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'GPU frequency',
-                value: overlay.showGpuFrequency,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showGpuFrequency: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'Game RAM and RSS',
-                value: overlay.showGameRam,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showGameRam: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'Instant power',
-                value: overlay.showPower,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showPower: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'Battery temperature',
-                value: overlay.showBatteryTemperature,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showBatteryTemperature: value),
-                ),
-              ),
-              _MetricSwitch(
-                title: 'SoC temperature',
-                value: overlay.showSocTemperature,
-                onChanged: (value) => controller.updateOverlayPreferences(
-                  overlay.copyWith(showSocTemperature: value),
-                ),
-                last: true,
-              ),
-            ],
-          ),
+        _Label('OVERLAY PRESETS'),
+        const SizedBox(height: 9),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _Preset('Minimal', 'minimal', controller, overlay),
+            _Preset('Performance', 'performance', controller, overlay),
+            _Preset('Thermal', 'thermal', controller, overlay),
+            _Preset('Battery', 'battery', controller, overlay),
+            _Preset('Network', 'network', controller, overlay),
+            _Preset('Full telemetry', 'full', controller, overlay),
+          ],
         ),
-        const SizedBox(height: 18),
-        _SectionLabel('PERMISSIONS'),
-        const SizedBox(height: 10),
-        _PermissionTile(
-          icon: Icons.query_stats_outlined,
-          title: 'Usage access',
-          subtitle: 'Used to identify the foreground game package.',
-          granted: controller.usageAccess,
-          action: controller.requestUsageAccess,
-        ),
-        _PermissionTile(
-          icon: Icons.picture_in_picture_alt_outlined,
-          title: 'Display over other apps',
-          subtitle: 'Required for the movable in-game overlay.',
-          granted: controller.overlayPermission,
-          action: controller.requestOverlayPermission,
-        ),
-        _PermissionTile(
-          icon: Icons.notifications_active_outlined,
-          title: 'Notifications',
-          subtitle: 'Recommended for the foreground monitor service.',
-          granted: controller.notificationPermission,
-          action: controller.requestNotificationPermission,
-        ),
-        _PermissionTile(
-          icon: Icons.security_outlined,
-          title: 'Root access',
-          subtitle: controller.rootAvailable
-              ? 'Root shell is operational.'
-              : controller.rootInstalled
-                  ? 'Approve FPSWatcher in SukiSU / KernelSU / Magisk. ${controller.rootError ?? ''}'
-                  : 'No compatible su binary was detected. ${controller.rootError ?? ''}',
-          granted: controller.rootAvailable,
-          action: controller.requestRootPermission,
-        ),
-        _PermissionTile(
-          icon: Icons.admin_panel_settings_outlined,
-          title: 'Shizuku',
-          subtitle: controller.shizukuOperational
-              ? 'UserService connected · UID ${controller.shizukuUid}.'
-              : controller.shizukuPermission
-                  ? 'Permission granted, but UserService is not responding. ${controller.shizukuError ?? ''}'
-                  : controller.shizukuAvailable
-                      ? 'Shizuku is running. Permission is required.'
-                      : 'Shizuku is not running or not installed.',
-          granted: controller.shizukuOperational,
-          action: controller.requestShizukuPermission,
-        ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
+        _OverlayPreview(preferences: overlay),
+        const SizedBox(height: 14),
+        _Label('OVERLAY APPEARANCE'),
+        const SizedBox(height: 9),
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Runtime',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+            padding: const EdgeInsets.all(16),
+            child: Column(children: [
+              _SliderRow(
+                label: 'Text size',
+                valueLabel: '${overlay.textSizeSp.toStringAsFixed(0)} sp',
+                value: overlay.textSizeSp,
+                min: 10,
+                max: 24,
+                divisions: 14,
+                onChanged: (value) => controller.updateOverlayPreferences(overlay.copyWith(textSizeSp: value)),
+              ),
+              _SliderRow(
+                label: 'Background opacity',
+                valueLabel: '${(overlay.opacity * 100).round()}%',
+                value: overlay.opacity,
+                min: .15,
+                max: 1,
+                divisions: 17,
+                onChanged: (value) => controller.updateOverlayPreferences(overlay.copyWith(opacity: value)),
+              ),
+              _SliderRow(
+                label: 'Padding',
+                valueLabel: '${overlay.paddingDp} dp',
+                value: overlay.paddingDp.toDouble(),
+                min: 0,
+                max: 24,
+                divisions: 24,
+                onChanged: (value) => controller.updateOverlayPreferences(overlay.copyWith(paddingDp: value.round())),
+              ),
+              const SizedBox(height: 6),
+              Row(children: [
+                const Expanded(child: Text('Layout')),
+                SegmentedButton<String>(
+                  segments: const [ButtonSegment(value: 'vertical', label: Text('Vertical')), ButtonSegment(value: 'horizontal', label: Text('Horizontal'))],
+                  selected: {overlay.layoutMode},
+                  onSelectionChanged: (values) => controller.updateOverlayPreferences(overlay.copyWith(layoutMode: values.first)),
                 ),
-                const SizedBox(height: 12),
-                _InfoRow(
-                  label: 'Rust core',
-                  value: controller.rustCore.available ? 'Loaded' : 'Fallback mode',
-                ),
-                _InfoRow(
-                  label: 'Root command',
-                  value: controller.rootAvailable ? 'Operational' : 'Unavailable / denied',
-                ),
-                _InfoRow(
-                  label: 'Shizuku service',
-                  value: controller.shizukuOperational ? 'Operational' : 'Unavailable',
-                ),
-                _InfoRow(
-                  label: 'Monitor service',
-                  value: controller.monitorServiceRunning ? 'Running' : 'Stopped',
-                ),
-                _InfoRow(
-                  label: 'Overlay',
-                  value: controller.overlayRunning ? 'Visible' : 'Hidden',
-                ),
-                _InfoRow(
-                  label: 'Selected backend',
-                  value: controller.accessMode.label,
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: controller.refreshStatus,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Refresh status'),
-                  ),
-                ),
-              ],
-            ),
+              ]),
+              SwitchListTile.adaptive(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Adaptive warning colors'),
+                subtitle: const Text('Changes the overlay text color for thermal or stability warnings.'),
+                value: overlay.adaptiveColors,
+                onChanged: (value) => controller.updateOverlayPreferences(overlay.copyWith(adaptiveColors: value)),
+              ),
+              const Divider(),
+              Row(children: [
+                const Expanded(child: Text('Overlay refresh')),
+                ...[100, 200, 500].map((ms) => Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: ChoiceChip(label: Text('$ms'), selected: overlay.refreshIntervalMs == ms, onSelected: (_) => controller.updateOverlayPreferences(overlay.copyWith(refreshIntervalMs: ms))),
+                    )),
+              ]),
+              const SizedBox(height: 12),
+              SizedBox(width: double.infinity, child: OutlinedButton.icon(onPressed: controller.resetOverlayPosition, icon: const Icon(Icons.center_focus_strong), label: const Text('Reset overlay position'))),
+            ]),
           ),
         ),
+        const SizedBox(height: 18),
+        _Label('OVERLAY METRICS'),
+        const SizedBox(height: 9),
+        Card(
+          child: Column(children: [
+            _Switch('Show only with detected game', overlay.showOnlyWhenGameDetected, (v) => controller.updateOverlayPreferences(overlay.copyWith(showOnlyWhenGameDetected: v))),
+            _Switch('FPS', overlay.showFps, (v) => controller.updateOverlayPreferences(overlay.copyWith(showFps: v))),
+            _Switch('5% low', overlay.showFivePercentLow, (v) => controller.updateOverlayPreferences(overlay.copyWith(showFivePercentLow: v))),
+            _Switch('1% and 0.1% low', overlay.showLows, (v) => controller.updateOverlayPreferences(overlay.copyWith(showLows: v))),
+            _Switch('Frame time / P95 / P99', overlay.showFrameTime, (v) => controller.updateOverlayPreferences(overlay.copyWith(showFrameTime: v))),
+            _Switch('Stability and stutters', overlay.showStability, (v) => controller.updateOverlayPreferences(overlay.copyWith(showStability: v))),
+            _Switch('Estimated dropped frames', overlay.showDroppedFrames, (v) => controller.updateOverlayPreferences(overlay.copyWith(showDroppedFrames: v))),
+            _Switch('System CPU usage', overlay.showSystemCpu, (v) => controller.updateOverlayPreferences(overlay.copyWith(showSystemCpu: v))),
+            _Switch('Game CPU usage', overlay.showAppCpu, (v) => controller.updateOverlayPreferences(overlay.copyWith(showAppCpu: v))),
+            _Switch('CPU frequency', overlay.showCpuFrequency, (v) => controller.updateOverlayPreferences(overlay.copyWith(showCpuFrequency: v))),
+            _Switch('Per-core CPU telemetry', overlay.showCpuCores, (v) => controller.updateOverlayPreferences(overlay.copyWith(showCpuCores: v))),
+            _Switch('CPU throttling', overlay.showCpuThrottle, (v) => controller.updateOverlayPreferences(overlay.copyWith(showCpuThrottle: v))),
+            _Switch('GPU usage', overlay.showGpuLoad, (v) => controller.updateOverlayPreferences(overlay.copyWith(showGpuLoad: v))),
+            _Switch('GPU frequency', overlay.showGpuFrequency, (v) => controller.updateOverlayPreferences(overlay.copyWith(showGpuFrequency: v))),
+            _Switch('GPU throttling', overlay.showGpuThrottle, (v) => controller.updateOverlayPreferences(overlay.copyWith(showGpuThrottle: v))),
+            _Switch('Game RAM / RSS', overlay.showGameRam, (v) => controller.updateOverlayPreferences(overlay.copyWith(showGameRam: v))),
+            _Switch('Swap / ZRAM / memory pressure', overlay.showMemory, (v) => controller.updateOverlayPreferences(overlay.copyWith(showMemory: v))),
+            _Switch('Process scheduler details', overlay.showProcessDetails, (v) => controller.updateOverlayPreferences(overlay.copyWith(showProcessDetails: v))),
+            _Switch('Instant power', overlay.showPower, (v) => controller.updateOverlayPreferences(overlay.copyWith(showPower: v))),
+            _Switch('FPS per watt', overlay.showEfficiency, (v) => controller.updateOverlayPreferences(overlay.copyWith(showEfficiency: v))),
+            _Switch('Battery drain rate', overlay.showBatteryDrain, (v) => controller.updateOverlayPreferences(overlay.copyWith(showBatteryDrain: v))),
+            _Switch('Battery temperature', overlay.showBatteryTemperature, (v) => controller.updateOverlayPreferences(overlay.copyWith(showBatteryTemperature: v))),
+            _Switch('SoC temperature', overlay.showSocTemperature, (v) => controller.updateOverlayPreferences(overlay.copyWith(showSocTemperature: v))),
+            _Switch('Thermal status / score', overlay.showThermalStatus, (v) => controller.updateOverlayPreferences(overlay.copyWith(showThermalStatus: v))),
+            _Switch('Ping / jitter / packet loss', overlay.showNetwork, (v) => controller.updateOverlayPreferences(overlay.copyWith(showNetwork: v))),
+            _Switch('Wi-Fi telemetry', overlay.showWifi, (v) => controller.updateOverlayPreferences(overlay.copyWith(showWifi: v))),
+            _Switch('FPSWatcher overhead', overlay.showMonitorOverhead, (v) => controller.updateOverlayPreferences(overlay.copyWith(showMonitorOverhead: v)), last: true),
+          ]),
+        ),
+        const SizedBox(height: 18),
+        _Label('PERMISSIONS'),
+        const SizedBox(height: 9),
+        _Permission(icon: Icons.query_stats_outlined, title: 'Usage access', subtitle: 'Identifies the foreground game package.', granted: controller.usageAccess, action: controller.requestUsageAccess),
+        _Permission(icon: Icons.picture_in_picture_alt_outlined, title: 'Display over other apps', subtitle: 'Required for the in-game overlay.', granted: controller.overlayPermission, action: controller.requestOverlayPermission),
+        _Permission(icon: Icons.notifications_active_outlined, title: 'Notifications', subtitle: 'Keeps the monitor service visible to Android.', granted: controller.notificationPermission, action: controller.requestNotificationPermission),
+        _Permission(icon: Icons.security_outlined, title: 'Root access', subtitle: controller.rootAvailable ? 'Root shell is operational.' : controller.rootError ?? 'Approve FPSWatcher in your root manager.', granted: controller.rootAvailable, action: controller.requestRootPermission),
+        _Permission(icon: Icons.admin_panel_settings_outlined, title: 'Shizuku', subtitle: controller.shizukuOperational ? 'UserService connected · UID ${controller.shizukuUid}.' : controller.shizukuError ?? 'Start Shizuku and grant permission.', granted: controller.shizukuOperational, action: controller.requestShizukuPermission),
       ],
     );
   }
-
-  String _description(AccessMode mode) => switch (mode) {
-        AccessMode.shizuku =>
-          'Non-root backend using Shizuku UserService and Android shell permissions.',
-        AccessMode.root =>
-          'Direct su backend for the widest sysfs, process and thermal access.',
-      };
 }
 
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-  final String text;
-
+class _Preset extends StatelessWidget {
+  const _Preset(this.label, this.name, this.controller, this.preferences);
+  final String label;
+  final String name;
+  final AppController controller;
+  final OverlayPreferences preferences;
   @override
-  Widget build(BuildContext context) => Text(
-        text,
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: Colors.white54,
-              letterSpacing: 1.4,
-            ),
+  Widget build(BuildContext context) => OutlinedButton(onPressed: () => controller.updateOverlayPreferences(preferences.preset(name)), child: Text(label));
+}
+
+class _Label extends StatelessWidget {
+  const _Label(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) => Text(text, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white54, letterSpacing: 1.4));
+}
+
+class _Switch extends StatelessWidget {
+  const _Switch(this.title, this.value, this.onChanged, {this.last = false});
+  final String title;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  final bool last;
+  @override
+  Widget build(BuildContext context) => Column(children: [
+        SwitchListTile.adaptive(title: Text(title), value: value, onChanged: onChanged),
+        if (!last) const Divider(height: 1),
+      ]);
+}
+
+class _Permission extends StatelessWidget {
+  const _Permission({required this.icon, required this.title, required this.subtitle, required this.granted, required this.action});
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool granted;
+  final Future<void> Function() action;
+  @override
+  Widget build(BuildContext context) => Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: ListTile(
+          leading: Icon(icon, color: granted ? const Color(0xFF39E7D0) : Colors.white38),
+          title: Text(title),
+          subtitle: Text(subtitle),
+          trailing: granted ? const Icon(Icons.check_circle, color: Color(0xFF39E7D0)) : TextButton(onPressed: action, child: const Text('Grant')),
+        ),
       );
 }
 
-class _OverlayPreview extends StatelessWidget {
-  const _OverlayPreview({required this.preferences});
-
-  final OverlayPreferences preferences;
-
-  @override
-  Widget build(BuildContext context) {
-    final lines = <String>[];
-    if (preferences.showFps || preferences.showLows) {
-      final values = <String>[];
-      if (preferences.showFps) values.add('FPS 120.0');
-      if (preferences.showLows) values.addAll(['1% 103.2', '0.1% 88.4']);
-      lines.add(values.join('  '));
-    }
-    if (preferences.showFrameTime) lines.add('FRAME 8.33 ms  P95 10.20');
-    if (preferences.showSystemCpu ||
-        preferences.showAppCpu ||
-        preferences.showCpuFrequency) {
-      final values = <String>[];
-      if (preferences.showSystemCpu) values.add('CPU 42.0%');
-      if (preferences.showCpuFrequency) values.add('3302 MHz');
-      if (preferences.showAppCpu) values.add('APP 168.0%');
-      lines.add(values.join('  '));
-    }
-    if (preferences.showGpuLoad || preferences.showGpuFrequency) {
-      final values = <String>[];
-      if (preferences.showGpuLoad) values.add('GPU 81.0%');
-      if (preferences.showGpuFrequency) values.add('900 MHz');
-      lines.add(values.join('  '));
-    }
-    if (preferences.showGameRam) lines.add('RAM 2640 MB  RSS 2910 MB');
-    if (preferences.showPower ||
-        preferences.showBatteryTemperature ||
-        preferences.showSocTemperature) {
-      final values = <String>[];
-      if (preferences.showPower) values.add('PWR 5.82 W');
-      if (preferences.showBatteryTemperature) values.add('BAT 38.7°C');
-      if (preferences.showSocTemperature) values.add('SOC 44.2°C');
-      lines.add(values.join('  '));
-    }
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: EdgeInsets.all(preferences.paddingDp.toDouble()),
-        decoration: BoxDecoration(
-          color: const Color(0xFF071018).withValues(alpha: preferences.opacity),
-          border: Border.all(color: const Color(0x8839E7D0)),
-        ),
-        child: Text(
-          lines.isEmpty ? 'FPSWatcher' : lines.join('\n'),
-          style: TextStyle(
-            color: preferences.textColor,
-            fontFamily: 'monospace',
-            fontWeight: FontWeight.w700,
-            fontSize: preferences.textSizeSp,
-            height: 1.15,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _SliderRow extends StatelessWidget {
-  const _SliderRow({
-    required this.label,
-    required this.valueLabel,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.divisions,
-    required this.onChanged,
-  });
-
+  const _SliderRow({required this.label, required this.valueLabel, required this.value, required this.min, required this.max, required this.divisions, required this.onChanged});
   final String label;
   final String valueLabel;
   final double value;
@@ -513,124 +244,44 @@ class _SliderRow extends StatelessWidget {
   final double max;
   final int divisions;
   final ValueChanged<double> onChanged;
-
   @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(child: Text(label)),
-            Text(valueLabel, style: const TextStyle(fontWeight: FontWeight.w800)),
-          ],
-        ),
-        Slider(
-          value: value,
-          min: min,
-          max: max,
-          divisions: divisions,
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => Column(children: [
+        Row(children: [Expanded(child: Text(label)), Text(valueLabel, style: const TextStyle(color: Colors.white54))]),
+        Slider(value: value, min: min, max: max, divisions: divisions, onChanged: onChanged),
+      ]);
 }
 
-class _MetricSwitch extends StatelessWidget {
-  const _MetricSwitch({
-    required this.title,
-    required this.value,
-    required this.onChanged,
-    this.last = false,
-  });
-
-  final String title;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  final bool last;
-
+class _OverlayPreview extends StatelessWidget {
+  const _OverlayPreview({required this.preferences});
+  final OverlayPreferences preferences;
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        SwitchListTile(
-          title: Text(title),
-          value: value,
-          onChanged: onChanged,
-          dense: true,
-        ),
-        if (!last) const Divider(height: 1),
-      ],
-    );
-  }
-}
-
-class _PermissionTile extends StatelessWidget {
-  const _PermissionTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.granted,
-    required this.action,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final bool granted;
-  final Future<void> Function() action;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Card(
-        child: ListTile(
-          leading: Icon(
-            icon,
-            color: granted
-                ? Theme.of(context).colorScheme.primary
-                : Colors.white38,
-          ),
-          title: Text(title),
-          subtitle: Text(subtitle),
-          trailing: granted
-              ? const Icon(Icons.check_circle, color: Color(0xFF39E7D0))
-              : FilledButton.tonal(
-                  onPressed: action,
-                  child: const Text('Grant'),
-                ),
-        ),
-      ),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.label, required this.value});
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(color: Colors.white54),
+    final chunks = <String>[];
+    if (preferences.showFps) chunks.add('FPS 120.0');
+    if (preferences.showFivePercentLow) chunks.add('5% 108.1');
+    if (preferences.showLows) chunks.add('1% 102.4  0.1% 88.0');
+    if (preferences.showFrameTime) chunks.add('FRAME 8.33  P99 12.4');
+    if (preferences.showStability) chunks.add('STAB 93.2%  S25 2');
+    if (preferences.showSystemCpu || preferences.showCpuFrequency) chunks.add('CPU 48%  3302 MHz');
+    if (preferences.showGpuLoad || preferences.showGpuFrequency) chunks.add('GPU 82%  903 MHz');
+    if (preferences.showPower) chunks.add('PWR 5.82 W  BAT 39.1°C');
+    if (preferences.showNetwork) chunks.add('PING 21 ms  JIT 2.1  LOSS 0%');
+    final text = chunks.join(preferences.layoutMode == 'horizontal' ? '   |   ' : '\n');
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('LIVE OVERLAY PREVIEW', style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 1)),
+          const SizedBox(height: 12),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Container(
+              padding: EdgeInsets.all(preferences.paddingDp.toDouble()),
+              color: const Color(0xFF071018).withValues(alpha: preferences.opacity),
+              child: Text(text.isEmpty ? 'FPSWatcher' : text, style: TextStyle(fontSize: preferences.textSizeSp, color: preferences.textColor, fontFamily: 'monospace')),
             ),
           ),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
+        ]),
       ),
     );
   }

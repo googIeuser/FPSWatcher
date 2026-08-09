@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.0
+
+- Expanded the telemetry engine into an advanced game-performance profiler while retaining the Shizuku/Root-only backend model.
+- Added rolling 5%, 1% and 0.1% low FPS, median/min/max FPS, P95/P99/best/worst frame time, frame-time histograms, frame-pacing score, micro-stutter, slow-frame, frozen-frame and estimated missed-VSync counters.
+- Added load-aware CPU/GPU throttling heuristics, thermal-stability scoring, CPU/GPU/SoC thermal-zone matching, CPU policy limits, per-core load/frequency, governor, affinity, scheduler, cpuset, uclamp, nice and thread telemetry.
+- Expanded GPU discovery across KGSL, devfreq, Mali, GED and debugfs with current/min/max clock, governor, load, renderer/vendor and raw diagnostic output.
+- Added process PSS/RSS/native/graphics memory, swap, ZRAM and PSI memory-pressure telemetry.
+- Added battery drain per hour, estimated remaining gaming time, FPS-per-watt efficiency, charge-counter tracking and explicit charging-state handling.
+- Added non-blocking ping/jitter/loss probes, RX/TX throughput, Wi-Fi details, cellular summaries, foreground game-category detection and best-effort foreground surface dimensions.
+- Added FPSWatcher self-overhead metrics and collector-latency diagnostics.
+- Added a live frame-time histogram, expanded capability matrix, raw expert diagnostics, performance event timeline and first-half/second-half session drift comparison.
+- Expanded CSV/JSON/HTML exports with advanced telemetry and hardened session recording against corrupt rows and oversized MethodChannel payloads.
+- Expanded the square native overlay with advanced telemetry presets, adaptive thresholds, metric visibility controls, 100/200/500 ms refresh options and game-only visibility.
+- Reduced UI overhead by retaining only scalar FPS history instead of hundreds of raw SurfaceFlinger/GPU payloads and by invoking Rust parsing only when native metrics need a fallback.
+- Increased privileged FPS polling to 250 ms while keeping expensive process, graphics-API and thermal-zone probes rate-limited to one-second windows.
+- Fixed duplicate Dart overlay layout parameters and a duplicate Rust gfxinfo parser conversion that would have prevented the advanced branch from compiling cleanly.
+
 ## 1.2.4
 
 - Fixed AAB signature verification: self-signed Android release certificates are accepted while the JAR signature and embedded certificate are still validated.

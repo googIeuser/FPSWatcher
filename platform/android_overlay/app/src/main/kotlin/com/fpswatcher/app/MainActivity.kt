@@ -210,6 +210,12 @@ class MainActivity : FlutterActivity() {
                 result.success(null)
             }
 
+            "addSessionMarker" -> {
+                val label = call.argument<String>("label").orEmpty()
+                NativeSessionStore.addMarker(label)
+                result.success(null)
+            }
+
             "getRecordedSamples" -> {
                 val limit = call.argument<Int>("limit")
                 val offset = call.argument<Int>("offset")
@@ -319,6 +325,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        runCatching { collector.close() }
         executor.shutdownNow()
         super.onDestroy()
     }

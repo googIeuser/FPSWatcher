@@ -196,8 +196,9 @@ class OverlayService : Service() {
     private fun updateOverlayVisibility(data: Map<String, Any?>) {
         val foreground = data["foregroundPackage"] as? String
         val showOnlyWithForeground = enabled("showOnlyWhenGameDetected", true)
+        val foregroundIsGame = data["foregroundIsGame"] as? Boolean
         val shouldHide = data["backendOperational"] == false ||
-            (showOnlyWithForeground && foreground.isNullOrBlank()) ||
+            (showOnlyWithForeground && (foreground.isNullOrBlank() || foregroundIsGame == false)) ||
             foreground == packageName ||
             foreground == "com.android.settings" ||
             foreground == "com.android.systemui" ||
@@ -208,9 +209,10 @@ class OverlayService : Service() {
     private fun updateText(data: Map<String, Any?>) {
         val lines = mutableListOf<String>()
 
-        if (enabled("showFps") || enabled("showLows")) {
+        if (enabled("showFps") || enabled("showLows") || enabled("showFivePercentLow")) {
             val parts = mutableListOf<String>()
             if (enabled("showFps")) parts += "FPS ${decimal(data["fps"])}"
+            if (enabled("showFivePercentLow")) parts += "5% ${decimal(data["fivePercentLowFps"])}"
             if (enabled("showLows")) {
                 parts += "1% ${decimal(data["onePercentLowFps"])}"
                 parts += "0.1% ${decimal(data["pointOnePercentLowFps"])}"
@@ -218,39 +220,122 @@ class OverlayService : Service() {
             if (parts.isNotEmpty()) lines += parts.joinToString("  ")
         }
         if (enabled("showFrameTime")) {
-            lines += "FRAME ${decimal2(data["frameTimeMs"])} ms  P95 ${decimal2(data["frameTimeP95Ms"])}"
+            lines += "FRAME ${decimal2(data["frameTimeMs"])} ms  P95 ${decimal2(data["frameTimeP95Ms"])}  P99 ${decimal2(data["frameTimeP99Ms"])}"
         }
-        if (enabled("showSystemCpu") || enabled("showAppCpu") || enabled("showCpuFrequency")) {
+        if (enabled("showStability") || enabled("showDroppedFrames")) {
+            val parts = mutableListOf<String>()
+            if (enabled("showStability")) {
+                parts += "STAB ${decimal(data["frameStabilityScore"])}%"
+                parts += "PACE ${decimal(data["framePacingScore"])}%"
+            }
+            if (enabled("showDroppedFrames")) parts += "DROP ${number(data["estimatedDroppedFrames"])}"
+            parts += "S25 ${number(data["stutter25msCount"])}"
+            val frozen = (data["frozenFrameCount"] as? Number)?.toLong() ?: 0L
+            if (frozen > 0) parts += "FROZEN $frozen"
+            if (parts.isNotEmpty()) lines += parts.joinToString("  ")
+        }
+        if (enabled("showSystemCpu") || enabled("showAppCpu") || enabled("showCpuFrequency") || enabled("showCpuThrottle")) {
             val parts = mutableListOf<String>()
             if (enabled("showSystemCpu")) parts += "CPU ${decimal(data["cpuUsage"])}%"
             if (enabled("showCpuFrequency")) parts += "${number(data["cpuFrequencyMhz"])} MHz"
             if (enabled("showAppCpu")) parts += "APP ${decimal(data["appCpuUsage"])}%"
+            if (enabled("showCpuThrottle")) parts += if (data["cpuThrottled"] == true) "CPU THR" else "CPU OK"
             if (parts.isNotEmpty()) lines += parts.joinToString("  ")
         }
-        if (enabled("showGpuLoad") || enabled("showGpuFrequency")) {
+        if (enabled("showCpuCores")) {
+            val usages = (data["cpuCoreUsagePercent"] as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }.orEmpty()
+            val freqs = (data["cpuCoreFrequenciesMhz"] as? List<*>)?.mapNotNull { (it as? Number)?.toDouble() }.orEmpty()
+            val count = maxOf(usages.size, freqs.size).coerceAtMost(12)
+            if (count > 0) {
+                lines += (0 until count).joinToString("  ") { index ->
+                    val usage = usages.getOrNull(index)?.let { String.format(Locale.US, "%.0f", it) } ?: "—"
+                    val freq = freqs.getOrNull(index)?.roundToInt()?.toString() ?: "—"
+                    "C$index $usage%/$freq"
+                }
+            }
+        }
+        if (enabled("showGpuLoad") || enabled("showGpuFrequency") || enabled("showGpuThrottle")) {
             val parts = mutableListOf<String>()
             if (enabled("showGpuLoad")) parts += "GPU ${decimal(data["gpuLoad"])}%"
             if (enabled("showGpuFrequency")) parts += "${number(data["gpuFrequencyMhz"])} MHz"
+            if (enabled("showGpuThrottle")) parts += if (data["gpuThrottled"] == true) "GPU THR" else "GPU OK"
             if (parts.isNotEmpty()) lines += parts.joinToString("  ")
         }
         if (enabled("showGameRam")) {
             lines += "RAM ${number(data["appRamMb"])} MB  RSS ${number(data["appRssMb"])} MB"
         }
-        if (enabled("showPower") || enabled("showBatteryTemperature") || enabled("showSocTemperature")) {
+        if (enabled("showMemory")) {
+            lines += "SWAP ${number(data["swapUsedMb"])} MB  ZRAM ${number(data["zramUsedMb"])} MB  PSI ${decimal2(data["memoryPressureAvg10"])}"
+        }
+        if (enabled("showProcessDetails")) {
+            lines += "PID ${number(data["appPid"])}  THR ${number(data["appThreadCount"])}  NICE ${number(data["appNice"])}  UCLAMP ${decimal(data["appUclampMin"])}-${decimal(data["appUclampMax"])}"
+            val scheduling = listOfNotNull(
+                (data["appSchedulerPolicy"] as? String)?.takeIf { it.isNotBlank() },
+                (data["appCpuAffinity"] as? String)?.takeIf { it.isNotBlank() }?.let { "AFF $it" },
+                (data["graphicsApi"] as? String)?.takeIf { it.isNotBlank() },
+            )
+            if (scheduling.isNotEmpty()) lines += scheduling.joinToString("  ")
+        }
+        if (enabled("showPower") || enabled("showBatteryTemperature") || enabled("showSocTemperature") || enabled("showEfficiency") || enabled("showBatteryDrain")) {
             val parts = mutableListOf<String>()
             if (enabled("showPower")) {
-                parts += if (data["batteryCharging"] == true) {
-                    "PWR CHG"
-                } else {
-                    "PWR ${decimal2(data["batteryPowerW"])} W"
+                parts += if (data["batteryCharging"] == true) "PWR CHG" else "PWR ${decimal2(data["batteryPowerW"])} W"
+            }
+            if (enabled("showEfficiency")) parts += "EFF ${decimal2(data["fpsPerWatt"])} FPS/W"
+            if (enabled("showBatteryDrain")) parts += "DRAIN ${decimal2(data["batteryDrainPercentPerHour"])} %/h"
+            if (enabled("showBatteryTemperature")) parts += "BAT ${decimal(data["batteryTemperatureC"])}°C"
+            if (enabled("showSocTemperature")) {
+                parts += "SOC ${decimal(data["socTemperatureC"])}°C"
+                if (data["cpuTemperatureC"] != null || data["gpuTemperatureC"] != null) {
+                    parts += "CPU/GPU ${decimal(data["cpuTemperatureC"])}°/${decimal(data["gpuTemperatureC"])}°"
                 }
             }
-            if (enabled("showBatteryTemperature")) parts += "BAT ${decimal(data["batteryTemperatureC"])}°C"
-            if (enabled("showSocTemperature")) parts += "SOC ${decimal(data["socTemperatureC"])}°C"
             if (parts.isNotEmpty()) lines += parts.joinToString("  ")
         }
+        if (enabled("showThermalStatus")) {
+            lines += "THERM ${thermalLabel(data["thermalStatus"])}  SCORE ${decimal(data["thermalStabilityScore"])}%${if (data["thermalThrottling"] == true) "  THROTTLING" else ""}"
+        }
+        if (enabled("showNetwork")) {
+            lines += "NET ${data["networkType"] ?: "—"}  PING ${decimal(data["networkPingMs"])} ms  JIT ${decimal(data["networkJitterMs"])}  LOSS ${decimal(data["networkPacketLossPercent"])}%"
+        }
+        if (enabled("showWifi")) {
+            lines += "WIFI ${number(data["wifiRssiDbm"])} dBm  ${number(data["wifiLinkSpeedMbps"])} Mbps  ${number(data["wifiFrequencyMhz"])} MHz"
+        }
+        if (enabled("showMonitorOverhead")) {
+            lines += "WATCHER ${decimal(data["monitorCpuUsage"])}% CPU  ${decimal(data["monitorRamMb"])} MB  ${decimal2(data["collectorLatencyMs"])} ms"
+        }
 
-        overlayView?.text = lines.takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "FPSWatcher"
+        val separator = if ((overlayConfig["layoutMode"] as? String) == "horizontal") "   |   " else "\n"
+        overlayView?.text = lines.takeIf { it.isNotEmpty() }?.joinToString(separator) ?: "FPSWatcher"
+        if (enabled("adaptiveColors")) updateAdaptiveColor(data)
+    }
+
+    private fun updateAdaptiveColor(data: Map<String, Any?>) {
+        val view = overlayView ?: return
+        val configured = (overlayConfig["textColorValue"] as? Number)?.toInt() ?: Color.WHITE
+        val severe = data["thermalThrottling"] == true ||
+            ((data["batteryTemperatureC"] as? Number)?.toDouble() ?: 0.0) >= 45.0 ||
+            ((data["socTemperatureC"] as? Number)?.toDouble() ?: 0.0) >= 55.0
+        val warning = ((data["frameStabilityScore"] as? Number)?.toDouble() ?: 100.0) < 70.0 ||
+            ((data["networkPacketLossPercent"] as? Number)?.toDouble() ?: 0.0) >= 3.0
+        view.setTextColor(
+            when {
+                severe -> Color.rgb(255, 107, 122)
+                warning -> Color.rgb(255, 214, 90)
+                else -> configured
+            },
+        )
+    }
+
+    private fun thermalLabel(value: Any?): String = when ((value as? Number)?.toInt()) {
+        0 -> "NONE"
+        1 -> "LIGHT"
+        2 -> "MODERATE"
+        3 -> "SEVERE"
+        4 -> "CRITICAL"
+        5 -> "EMERGENCY"
+        6 -> "SHUTDOWN"
+        else -> "—"
     }
 
     private fun number(value: Any?): String =
@@ -311,6 +396,7 @@ class OverlayService : Service() {
     override fun onDestroy() {
         destroyed = true
         handler.removeCallbacksAndMessages(null)
+        runCatching { collector.close() }
         executor.shutdownNow()
         hideOverlay()
         isRunning = false

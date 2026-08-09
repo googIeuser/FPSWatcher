@@ -14,27 +14,17 @@ object OverlayPreferences {
 
     fun snapshot(context: Context): Map<String, Any> {
         val p = prefs(context)
-        return mapOf(
+        val result = linkedMapOf<String, Any>(
             "textSizeSp" to p.getFloat("textSizeSp", 13f).toDouble(),
             "opacity" to p.getFloat("opacity", 0.92f).toDouble(),
             "paddingDp" to p.getInt("paddingDp", 10),
             "refreshIntervalMs" to p.getInt("refreshIntervalMs", 100),
             "textColorValue" to (p.getInt("textColorValue", -1).toLong() and 0xFFFFFFFFL),
-            "showFps" to p.getBoolean("showFps", true),
-            "showLows" to p.getBoolean("showLows", true),
-            "showFrameTime" to p.getBoolean("showFrameTime", true),
-            "showSystemCpu" to p.getBoolean("showSystemCpu", true),
-            "showAppCpu" to p.getBoolean("showAppCpu", true),
-            "showCpuFrequency" to p.getBoolean("showCpuFrequency", true),
-            "showGpuLoad" to p.getBoolean("showGpuLoad", true),
-            "showGpuFrequency" to p.getBoolean("showGpuFrequency", true),
-            "showGameRam" to p.getBoolean("showGameRam", true),
-            "showPower" to p.getBoolean("showPower", true),
-            "showBatteryTemperature" to p.getBoolean("showBatteryTemperature", true),
-            "showSocTemperature" to p.getBoolean("showSocTemperature", false),
-            "showOnlyWhenGameDetected" to p.getBoolean("showOnlyWhenGameDetected", true),
+            "layoutMode" to (p.getString("layoutMode", "vertical") ?: "vertical"),
             "revision" to p.getLong(KEY_REVISION, 0L),
         )
+        BOOLEAN_DEFAULTS.forEach { (key, fallback) -> result[key] = p.getBoolean(key, fallback) }
+        return result
     }
 
     fun update(context: Context, values: Map<*, *>) {
@@ -49,7 +39,10 @@ object OverlayPreferences {
         values["textColorValue"].asInt()?.let { value ->
             editor.putInt("textColorValue", value.takeIf(ALLOWED_TEXT_COLORS::contains) ?: -1)
         }
-        BOOLEAN_KEYS.forEach { key ->
+        (values["layoutMode"] as? String)?.lowercase()?.let { value ->
+            editor.putString("layoutMode", if (value == "horizontal") "horizontal" else "vertical")
+        }
+        BOOLEAN_DEFAULTS.keys.forEach { key ->
             (values[key] as? Boolean)?.let { editor.putBoolean(key, it) }
         }
         editor.putLong(KEY_REVISION, p.getLong(KEY_REVISION, 0L) + 1L)
@@ -87,19 +80,34 @@ object OverlayPreferences {
     private val ALLOWED_REFRESH = listOf(100, 200, 500)
     private val ALLOWED_TEXT_COLORS = setOf(-1, 0xFF39E7D0.toInt(), 0xFF7CFF84.toInt(), 0xFFFFD65A.toInt())
 
-    private val BOOLEAN_KEYS = listOf(
-        "showFps",
-        "showLows",
-        "showFrameTime",
-        "showSystemCpu",
-        "showAppCpu",
-        "showCpuFrequency",
-        "showGpuLoad",
-        "showGpuFrequency",
-        "showGameRam",
-        "showPower",
-        "showBatteryTemperature",
-        "showSocTemperature",
-        "showOnlyWhenGameDetected",
+    private val BOOLEAN_DEFAULTS = linkedMapOf(
+        "adaptiveColors" to true,
+        "showFps" to true,
+        "showFivePercentLow" to false,
+        "showLows" to true,
+        "showFrameTime" to true,
+        "showStability" to true,
+        "showDroppedFrames" to false,
+        "showSystemCpu" to true,
+        "showAppCpu" to true,
+        "showCpuFrequency" to true,
+        "showCpuCores" to false,
+        "showCpuThrottle" to true,
+        "showGpuLoad" to true,
+        "showGpuFrequency" to true,
+        "showGpuThrottle" to true,
+        "showGameRam" to true,
+        "showMemory" to false,
+        "showProcessDetails" to false,
+        "showPower" to true,
+        "showEfficiency" to false,
+        "showBatteryDrain" to false,
+        "showBatteryTemperature" to true,
+        "showSocTemperature" to false,
+        "showThermalStatus" to true,
+        "showNetwork" to false,
+        "showWifi" to false,
+        "showMonitorOverhead" to false,
+        "showOnlyWhenGameDetected" to true,
     )
 }
