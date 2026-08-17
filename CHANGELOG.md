@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.1
+
+- Optimized Rust core regex compilation and matching for faster parsing.
+- Refactored frame time histogram bucket deduplication.
+- Improved CSV serialization allocation efficiency.
+
 ## 1.3.0
 
 ### Highlights
