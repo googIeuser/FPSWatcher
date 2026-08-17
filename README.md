@@ -1,4 +1,4 @@
- # FPSWatcher Next v1.3.0
+# FPSWatcher Next v1.3.0
 
 FPSWatcher Next is an Android game telemetry and session-analysis tool built with **Flutter**, **Kotlin**, and a focused **Rust** analytics/export core. The app intentionally exposes only two privileged telemetry backends: **Shizuku** and **Root**.
 
