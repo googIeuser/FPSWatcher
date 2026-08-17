@@ -1,89 +1,76 @@
-# FPSWatcher Next v1.3.1
+<div align="center">
+  <img src="assets/icon/app_icon.png" width="120" alt="FPSWatcher Logo">
+  
+  # FPSWatcher Next
+  
+  **The Ultimate Android Game Telemetry & Performance Profiler**
+  
+  [![Flutter](https://img.shields.io/badge/Flutter-3.4+-02569B?logo=flutter)](https://flutter.dev)
+  [![Rust](https://img.shields.io/badge/Rust-Core-000000?logo=rust)](https://www.rust-lang.org)
+  [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-FPSWatcher Next is an Android game telemetry and session-analysis tool built with **Flutter**, **Kotlin**, and a focused **Rust** analytics/export core. The app intentionally exposes only two privileged telemetry backends: **Shizuku** and **Root**.
+</div>
 
-## Advanced telemetry
+---
 
-### Frame performance
+**FPSWatcher Next** is an advanced, lightweight Android game telemetry and session-analysis tool. Built with a beautiful **Flutter** interface and a blazing-fast **Rust** analytics core, it gives you PC-level performance metrics right on your mobile device. 
 
-- SurfaceFlinger FPS with `gfxinfo` fallback
-- Rolling 5%, 1% and 0.1% low FPS
-- Median, minimum and maximum instantaneous FPS
-- Average, P95, P99, best and worst frame time
-- Frame-time histogram and live FPS history
-- Frame-pacing and frame-stability scores
-- Micro-stutter, slow-frame, frozen-frame and 25/50/100 ms spike counters
-- Estimated missed-VSync/dropped-frame count and refresh-rate mismatch detection
+The app intentionally relies on only two secure, privileged telemetry backends: **Shizuku** and **Root**. No messy hacks, just pure, accurate data.
 
-### CPU, scheduler and process
+## 🚀 Key Features
 
-- System and foreground-game CPU load
-- Per-core CPU load and frequency
-- Current/min/max CPU policy clocks and governor
-- Load-aware CPU throttling/headroom analysis
-- PID, thread count, nice value, cpuset, uclamp, CPU affinity and scheduler policy
-- Best-effort Android Game Mode and graphics-API information
+### 🎮 Frame Performance
+Get absolute clarity on your gaming fluidity.
+- **SurfaceFlinger FPS** with accurate `gfxinfo` fallbacks.
+- **Micro-stutter & Lows:** Rolling 5%, 1%, and 0.1% low FPS metrics.
+- **Frame Analytics:** Average, P95, P99, best, and worst frame times.
+- **Visuals:** Frame-time histograms and live FPS history graphs.
+- **Stability:** Frame-pacing, frame-stability scores, and frozen-frame detection.
 
-### GPU
+### 🧠 CPU, GPU & Process Telemetry
+Understand what's bottlenecking your device.
+- **Per-core CPU Tracking:** Load, frequency, policy clocks, and governor states.
+- **GPU Discovery:** Supports Qualcomm KGSL, generic devfreq, Arm Mali, MediaTek GED, and select debugfs nodes.
+- **Process Deep-Dive:** Thread counts, nice values, CPU affinity, and scheduler policies.
+- **Headroom Analysis:** Load-aware CPU/GPU throttling detection.
 
-- Renderer/vendor detection
-- Current/min/max GPU frequency
-- GPU utilization and governor where exposed by the device
-- Load-aware GPU throttling/headroom analysis
-- Qualcomm KGSL, generic devfreq, Arm Mali, MediaTek GED and selected debugfs probes
-- Raw GPU diagnostics for device bring-up
+### 🔋 Power, Thermals & Memory
+Monitor your device's physical limits.
+- **Battery Health:** Discharge power, current, voltage, and temperature.
+- **Efficiency:** Real-time FPS-per-watt efficiency and estimated remaining game time.
+- **Thermal Zones:** Automatic matching of SoC/CPU/GPU thermal zones with throttling alerts.
+- **Memory Pressure:** Game PSS/RSS, system RAM, swap, ZRAM, and PSI memory pressure.
 
-### Power, thermals and memory
+### 📡 Network & Display
+- **Network Probing:** Non-blocking ping, jitter, packet-loss, and RX/TX throughput.
+- **Connection Details:** Wi-Fi RSSI, link speed, and cellular signal summary.
+- **Display Sync:** Refresh rate, refresh/FPS ratio, and VSync drop estimation.
 
-- Battery-side discharge power, current and voltage
-- Battery level, temperature and charge counter
-- Battery drain in `%/h` and `mAh/h`
-- Estimated remaining gaming time
-- FPS-per-watt efficiency
-- Android thermal status plus best-matching SoC/CPU/GPU thermal zones
-- Thermal-stability score and throttling event detection
-- Game PSS/RSS/native/graphics memory
-- System RAM, swap, ZRAM and PSI memory pressure
+---
 
-### Network and display
+## 🛠️ Under the Hood
 
-- RX/TX throughput
-- Non-blocking ping, jitter and packet-loss probe
-- Wi-Fi RSSI, link speed, frequency and standard where Android exposes them
-- Best-effort cellular network/signal summary
-- Display refresh rate, refresh/FPS ratio and foreground game classification
-- Best-effort foreground surface/window dimensions
+FPSWatcher is engineered for **minimal overhead**. The native monitor never gets in the way of your gaming:
+- **Rust Analytics Core:** The telemetry parser is written entirely in Rust, utilizing `OnceLock` cached regexes, zero-allocation string splits, and pre-allocated capacity vectors to ensure near-zero CPU and memory footprint.
+- **Smart Sampling:** Fast counters (FPS) use short intervals, while expensive probes (like `dumpsys`) are independently cached.
+- **Native Overlay:** The in-game overlay is rendered via native Android APIs (not Flutter) to ensure square-corner, zero-latency drawing. Includes multiple presets (minimal, thermal, network, full).
 
-### Monitor overhead
+## 📊 Sessions and Reports
+Record sessions natively in the background without interrupting your game.
+- **Manual Markers:** Add markers to split your session (e.g., "Boss Fight", "Menu").
+- **Drift Analysis:** Automatically compare first-half vs. second-half performance to detect thermal throttling over time.
+- **Export Everywhere:** Export your raw data or formatted reports in **CSV**, **JSON**, **HTML**, or **PNG** dashboards.
 
-- Native collector latency
-- FPSWatcher process CPU usage
-- FPSWatcher PSS memory usage
+---
 
-## Sessions and reports
+## 🤝 Contributing
+We love community contributions! If you'd like to help improve FPSWatcher:
+1. Check out our [Contributing Guidelines](CONTRIBUTING.md).
+2. Review the [Code of Conduct](CODE_OF_CONDUCT.md).
+3. Open an issue or submit a Pull Request!
 
-Sessions are recorded natively so collection can continue while the game is in the foreground. The app includes manual markers, automatic performance-event detection, first-half/second-half performance drift analysis, and exports to **CSV**, **JSON**, **HTML**, and dashboard **PNG**.
+## 🛡️ Security
+If you discover a vulnerability, please refer to our [Security Policy](SECURITY.md) for reporting guidelines.
 
-## Overlay
-
-The overlay is native Android rather than Flutter. It has square corners and no backend label. Users can select 100/200/500 ms display refresh, vertical or horizontal layout, text size/color, padding, background opacity, adaptive warning colors, game-only visibility and individual metrics. Minimal, performance, thermal, battery, network and full telemetry presets are available.
-
-## Diagnostics
-
-The Diagnostics page acts as a device capability scanner and expert view. It reports backend health, per-metric availability/source, collector warnings, raw thermal zones, SurfaceFlinger excerpts, GPU probe output, per-core counters, scheduler/affinity information and monitor overhead.
-
-## Shizuku and Root behavior
-
-Shizuku runs with Android shell privileges, so protected kernel counters may remain unavailable on some ROMs. Root can access substantially more `/sys`, `/proc` and vendor/debug nodes. FPSWatcher never fabricates unavailable protected metrics. GPU load/frequency under Shizuku therefore depends on the device kernel and SELinux permissions.
-
-## Sampling architecture
-
-Fast counters and UI updates use short intervals while expensive `dumpsys`/process probes are independently cached. Network probing is asynchronous. Dashboard and overlay reuse short-lived snapshots to avoid duplicate shell work. Session recording uses buffered JSONL storage rather than flushing every sample. The native Rust parser utilizes `OnceLock` cached regexes, zero-allocation splits, and pre-allocated vectors to ensure minimal memory overhead and CPU usage during telemetry processing.
-
-## Repository workflow
-
-The repository is GitHub Desktop friendly. Normal CI validates Flutter/Rust sources and publishes **only a debug APK artifact**. Signed universal/split APKs and the Play Store AAB are built exclusively by the **Stable Release** workflow using the persistent Android signing key supplied through GitHub Actions secrets; see [`docs/STABLE_RELEASE.md`](docs/STABLE_RELEASE.md).
-
-## Portability notes
-
-FPSWatcher is deliberately universal rather than vendor-specific. Exact counter availability varies across SoCs, kernels, Android versions and ROM security policy. Vendor-only game turbo modes, exact internal render resolution and some protected GPU counters cannot be guaranteed through a universal Shizuku path.
+## 📄 License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
