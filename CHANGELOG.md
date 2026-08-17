@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0
+
+- Fully migrated the application UI to Material Expressive (Material 3).
+- Added Dynamic Color (Material You) support across the entire app.
+- Added adaptive dark/light mode themes and expressive layout tokens.
+- Refactored hardcoded UI colors to semantic Material tokens.
+
 ## 1.3.1
 
 - Optimized Rust core regex compilation and matching for faster parsing.
