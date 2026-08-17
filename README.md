@@ -1,4 +1,4 @@
-# FPSWatcher Next v1.3.0
+# FPSWatcher Next v1.3.1
 
 FPSWatcher Next is an Android game telemetry and session-analysis tool built with **Flutter**, **Kotlin**, and a focused **Rust** analytics/export core. The app intentionally exposes only two privileged telemetry backends: **Shizuku** and **Root**.
 
@@ -78,7 +78,7 @@ Shizuku runs with Android shell privileges, so protected kernel counters may rem
 
 ## Sampling architecture
 
-Fast counters and UI updates use short intervals while expensive `dumpsys`/process probes are independently cached. Network probing is asynchronous. Dashboard and overlay reuse short-lived snapshots to avoid duplicate shell work. Session recording uses buffered JSONL storage rather than flushing every sample.
+Fast counters and UI updates use short intervals while expensive `dumpsys`/process probes are independently cached. Network probing is asynchronous. Dashboard and overlay reuse short-lived snapshots to avoid duplicate shell work. Session recording uses buffered JSONL storage rather than flushing every sample. The native Rust parser utilizes `OnceLock` cached regexes, zero-allocation splits, and pre-allocated vectors to ensure minimal memory overhead and CPU usage during telemetry processing.
 
 ## Repository workflow
 
