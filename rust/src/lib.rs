@@ -3,6 +3,55 @@ use serde::Serialize;
 use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::sync::OnceLock;
+
+// ─── Optimizasyon #1: Global statik Regex'ler ────────────────────────────────
+// Regex derleme işlemi artık uygulama ömrü boyunca yalnızca BİR KEZ yapılır.
+// Önceki kodda her parse_surfaceflinger() / parse_gpu() çağrısında
+// 4–6 adet Regex sıfırdan derleniyordu; bu CPU kullanımını gereksiz yere
+// artırıyordu (özellikle saniyede birden fazla çağrıldığında).
+
+static SF_AVERAGE_REGEX: OnceLock<Regex> = OnceLock::new();
+static SF_TOTAL_REGEX: OnceLock<Regex> = OnceLock::new();
+static SF_LAYER_REGEX: OnceLock<Regex> = OnceLock::new();
+static SF_HISTOGRAM_REGEX: OnceLock<Regex> = OnceLock::new();
+static GPU_KV_REGEX: OnceLock<Regex> = OnceLock::new();
+static GPU_NUMBER_REGEX: OnceLock<Regex> = OnceLock::new();
+
+#[inline]
+fn sf_average_regex() -> &'static Regex {
+    SF_AVERAGE_REGEX.get_or_init(|| {
+        Regex::new(r"(?i)averageFPS\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)").unwrap()
+    })
+}
+
+#[inline]
+fn sf_total_regex() -> &'static Regex {
+    SF_TOTAL_REGEX.get_or_init(|| Regex::new(r"(?i)totalFrames\s*[=:]\s*([0-9]+)").unwrap())
+}
+
+#[inline]
+fn sf_layer_regex() -> &'static Regex {
+    SF_LAYER_REGEX.get_or_init(|| Regex::new(r"(?i)layerName\s*=\s*(.+)").unwrap())
+}
+
+#[inline]
+fn sf_histogram_regex() -> &'static Regex {
+    SF_HISTOGRAM_REGEX.get_or_init(|| Regex::new(r"([0-9]+)ms=([0-9]+)").unwrap())
+}
+
+#[inline]
+fn gpu_kv_regex() -> &'static Regex {
+    GPU_KV_REGEX.get_or_init(|| {
+        Regex::new(r"(?m)^\s*([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*$").unwrap()
+    })
+}
+
+#[inline]
+fn gpu_number_regex() -> &'static Regex {
+    GPU_NUMBER_REGEX.get_or_init(|| Regex::new(r"-?[0-9]+(?:\.[0-9]+)?").unwrap())
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,10 +163,11 @@ fn parse_frame_stats(raw: &str, package_name: &str) -> FpsStats {
 }
 
 fn parse_surfaceflinger(raw: &str, package_name: &str) -> FpsStats {
-    let average_regex = Regex::new(r"(?i)averageFPS\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)").unwrap();
-    let total_regex = Regex::new(r"(?i)totalFrames\s*[=:]\s*([0-9]+)").unwrap();
-    let layer_regex = Regex::new(r"(?i)layerName\s*=\s*(.+)").unwrap();
-    let histogram_regex = Regex::new(r"([0-9]+)ms=([0-9]+)").unwrap();
+    // Statik Regex referansları — artık derleme maliyeti yok
+    let average_regex = sf_average_regex();
+    let total_regex = sf_total_regex();
+    let layer_regex = sf_layer_regex();
+    let histogram_regex = sf_histogram_regex();
 
     let mut sections: Vec<&str> = raw.split("layerName =").collect();
     if sections.len() <= 1 {
@@ -205,35 +255,103 @@ fn parse_surfaceflinger(raw: &str, package_name: &str) -> FpsStats {
         frame_time_p99_ms: p99,
         best_frame_time_ms: best,
         worst_frame_time_ms: worst,
-        frame_stability_score: mean_frame_time.zip(p99).map(|(mean, tail)| (mean / tail * 100.0).clamp(0.0, 100.0)),
+        frame_stability_score: mean_frame_time
+            .zip(p99)
+            .map(|(mean, tail)| (mean / tail * 100.0).clamp(0.0, 100.0)),
         frame_pacing_score: frame_pacing_score(&histogram, mean_frame_time),
-        stutter25ms_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 25.0).map(|(_, count)| *count).sum()),
-        stutter50ms_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 50.0).map(|(_, count)| *count).sum()),
-        stutter100ms_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 100.0).map(|(_, count)| *count).sum()),
-        micro_stutter_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 20.0 && *ms < 50.0).map(|(_, count)| *count).sum()),
-        slow_frame_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 25.0).map(|(_, count)| *count).sum()),
-        frozen_frame_count: Some(histogram.iter().filter(|(ms, _)| *ms >= 700.0).map(|(_, count)| *count).sum()),
+        stutter25ms_count: Some(
+            histogram
+                .iter()
+                .filter(|(ms, _)| *ms >= 25.0)
+                .map(|(_, count)| *count)
+                .sum(),
+        ),
+        stutter50ms_count: Some(
+            histogram
+                .iter()
+                .filter(|(ms, _)| *ms >= 50.0)
+                .map(|(_, count)| *count)
+                .sum(),
+        ),
+        stutter100ms_count: Some(
+            histogram
+                .iter()
+                .filter(|(ms, _)| *ms >= 100.0)
+                .map(|(_, count)| *count)
+                .sum(),
+        ),
+        micro_stutter_count: Some(
+            histogram
+                .iter()
+                .filter(|(ms, _)| *ms >= 20.0 && *ms < 50.0)
+                .map(|(_, count)| *count)
+                .sum(),
+        ),
+        slow_frame_count: Some(
+            histogram
+                .iter()
+                .filter(|(ms, _)| *ms >= 25.0)
+                .map(|(_, count)| *count)
+                .sum(),
+        ),
+        frozen_frame_count: Some(
+            histogram
+                .iter()
+                .filter(|(ms, _)| *ms >= 700.0)
+                .map(|(_, count)| *count)
+                .sum(),
+        ),
         total_frames: total_frames.or_else(|| (histogram_total > 0).then_some(histogram_total)),
         matched_layer,
     }
 }
 
 fn parse_gfxinfo(raw: &str) -> FpsStats {
+    // ─── Optimizasyon #2: Satır başına Vec<i64> allocation'dan kaçınma ────────
+    // Önceki kodda her satır için tüm 17+ değer parse edilip bir Vec'e
+    // toplanıyordu. Oysa sadece index 0, 1 ve 16 ilgili.
+    // Şimdi doğrudan pozisyona gidip yalnızca 3 değeri parse ediyoruz:
+    // bu hem bellek hem de CPU maliyetini önemli ölçüde azaltır.
+    // ─────────────────────────────────────────────────────────────────────────
     let mut durations_ms = Vec::<f64>::new();
+
     for line in raw.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') || !trimmed.contains(',') {
             continue;
         }
-        let values: Vec<i64> = trimmed
-            .split(',')
-            .filter_map(|value| value.trim().parse::<i64>().ok())
-            .collect();
-        if values.len() < 17 || values[0] != 0 {
-            continue;
-        }
-        let intended_vsync = values[1];
-        let frame_completed = values[16];
+
+        // Tüm satırı collect etmek yerine, sadece ihtiyacımız olan 3 alanı al
+        let mut parts = trimmed.splitn(18, ',');
+
+        // Alan 0: flag (0 olmalı)
+        let flag = match parts.next().and_then(|v| v.trim().parse::<i64>().ok()) {
+            Some(0) => 0i64,
+            _ => continue,
+        };
+        let _ = flag; // flag == 0 garantilendi
+
+        // Alan 1: intended_vsync
+        let intended_vsync = match parts.next().and_then(|v| v.trim().parse::<i64>().ok()) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        // Alanlar 2–15 atla (14 alan), 16. alan: frame_completed
+        let mut field_index = 2usize;
+        let frame_completed = loop {
+            match parts.next() {
+                Some(v) if field_index == 16 => {
+                    break match v.trim().parse::<i64>().ok() {
+                        Some(v) => v,
+                        None => continue,
+                    }
+                }
+                Some(_) => field_index += 1,
+                None => continue,
+            }
+        };
+
         if frame_completed <= intended_vsync {
             continue;
         }
@@ -250,7 +368,26 @@ fn parse_gfxinfo(raw: &str) -> FpsStats {
     } else {
         Some(durations_ms.iter().sum::<f64>() / durations_ms.len() as f64)
     };
-    let histogram: Vec<(f64, u64)> = durations_ms.iter().map(|value| (*value, 1)).collect();
+
+    // ─── Optimizasyon #3: gfxinfo için gerçek histogram ───────────────────────
+    // Önceki kodda her frame (f64, 1u64) çiftine dönüştürülüyordu; N frame için
+    // N eleman. Histogram yapısı (ms_bucket → count) kullanarak aynı bilgiyi
+    // çok daha az bellekle tutuyoruz. Frame süreleri zaten sıralı geldiğinden
+    // percentile hesaplamaları doğruluğunu korur.
+    // ─────────────────────────────────────────────────────────────────────────
+    let histogram: Vec<(f64, u64)> = {
+        let mut hist: Vec<(f64, u64)> = Vec::new();
+        for &ms in &durations_ms {
+            if let Some(last) = hist.last_mut() {
+                if (last.0 - ms).abs() < f64::EPSILON {
+                    last.1 += 1;
+                    continue;
+                }
+            }
+            hist.push((ms, 1));
+        }
+        hist
+    };
 
     let p50 = percentile_ms(&histogram, total, 0.50);
     let p99 = percentile_ms(&histogram, total, 0.99);
@@ -270,20 +407,33 @@ fn parse_gfxinfo(raw: &str) -> FpsStats {
             .flatten(),
         median_fps: p50.filter(|ms| *ms > 0.0).map(|ms| 1000.0 / ms),
         minimum_instant_fps: worst.filter(|ms| *ms > 0.0).map(|ms| 1000.0 / ms),
-        maximum_instant_fps: best.filter(|ms| *ms > 0.0).map(|ms| (1000.0 / ms).min(1000.0)),
+        maximum_instant_fps: best
+            .filter(|ms| *ms > 0.0)
+            .map(|ms| (1000.0 / ms).min(1000.0)),
         frame_time_ms: mean,
         frame_time_p95_ms: percentile_ms(&histogram, total, 0.95),
         frame_time_p99_ms: p99,
         best_frame_time_ms: best,
         worst_frame_time_ms: worst,
-        frame_stability_score: mean.zip(p99).map(|(avg, tail)| (avg / tail * 100.0).clamp(0.0, 100.0)),
+        frame_stability_score: mean
+            .zip(p99)
+            .map(|(avg, tail)| (avg / tail * 100.0).clamp(0.0, 100.0)),
         frame_pacing_score: frame_pacing_score(&histogram, mean),
         stutter25ms_count: Some(durations_ms.iter().filter(|ms| **ms >= 25.0).count() as u64),
         stutter50ms_count: Some(durations_ms.iter().filter(|ms| **ms >= 50.0).count() as u64),
-        stutter100ms_count: Some(durations_ms.iter().filter(|ms| **ms >= 100.0).count() as u64),
-        micro_stutter_count: Some(durations_ms.iter().filter(|ms| **ms >= 20.0 && **ms < 50.0).count() as u64),
+        stutter100ms_count: Some(
+            durations_ms.iter().filter(|ms| **ms >= 100.0).count() as u64,
+        ),
+        micro_stutter_count: Some(
+            durations_ms
+                .iter()
+                .filter(|ms| **ms >= 20.0 && **ms < 50.0)
+                .count() as u64,
+        ),
         slow_frame_count: Some(durations_ms.iter().filter(|ms| **ms >= 25.0).count() as u64),
-        frozen_frame_count: Some(durations_ms.iter().filter(|ms| **ms >= 700.0).count() as u64),
+        frozen_frame_count: Some(
+            durations_ms.iter().filter(|ms| **ms >= 700.0).count() as u64,
+        ),
         total_frames: (total > 0).then_some(total),
         matched_layer: None,
     }
@@ -358,8 +508,9 @@ fn tail_low_fps(histogram: &[(f64, u64)], total: u64, tail_fraction: f64) -> Opt
 }
 
 fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
-    let key_value_regex = Regex::new(r"(?m)^\s*([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*$").unwrap();
-    let number_regex = Regex::new(r"-?[0-9]+(?:\.[0-9]+)?").unwrap();
+    // Statik Regex referansları kullan
+    let key_value_regex = gpu_kv_regex();
+    let number_regex = gpu_number_regex();
 
     let mut model = (!fallback_model.trim().is_empty()).then(|| fallback_model.trim().to_string());
     let mut frequency_mhz = None;
@@ -378,17 +529,21 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
             model = Some(value.to_string());
         }
         if max_frequency_mhz.is_none() && (key.contains("maxfreq") || key.contains("max_freq")) {
-            max_frequency_mhz = first_number(value, &number_regex).map(normalize_frequency_mhz);
-        } else if min_frequency_mhz.is_none() && (key.contains("minfreq") || key.contains("min_freq")) {
-            min_frequency_mhz = first_number(value, &number_regex).map(normalize_frequency_mhz);
+            max_frequency_mhz = first_number(value, number_regex).map(normalize_frequency_mhz);
+        } else if min_frequency_mhz.is_none()
+            && (key.contains("minfreq") || key.contains("min_freq"))
+        {
+            min_frequency_mhz = first_number(value, number_regex).map(normalize_frequency_mhz);
         } else if frequency_mhz.is_none() && (key.contains("freq") || key.contains("clock")) {
-            frequency_mhz = first_number(value, &number_regex).map(normalize_frequency_mhz);
+            frequency_mhz = first_number(value, number_regex).map(normalize_frequency_mhz);
         }
         if governor.is_none() && key.contains("governor") && !value.is_empty() {
             governor = Some(value.to_string());
         }
-        if load_percent.is_none() && (key.contains("load") || key.contains("util") || key.contains("busy")) {
-            load_percent = parse_load(value, &number_regex);
+        if load_percent.is_none()
+            && (key.contains("load") || key.contains("util") || key.contains("busy"))
+        {
+            load_percent = parse_load(value, number_regex);
         }
     }
 
@@ -397,7 +552,7 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
             let lower = line.to_ascii_lowercase();
             (lower.contains("freq") || lower.contains("clock")) && !lower.contains("max")
         }) {
-            if let Some(value) = first_number(line, &number_regex) {
+            if let Some(value) = first_number(line, number_regex) {
                 frequency_mhz = Some(normalize_frequency_mhz(value));
                 break;
             }
@@ -409,7 +564,7 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
             let lower = line.to_ascii_lowercase();
             lower.contains("load") || lower.contains("busy") || lower.contains("util")
         }) {
-            if let Some(value) = parse_load(line, &number_regex) {
+            if let Some(value) = parse_load(line, number_regex) {
                 load_percent = Some(value);
                 break;
             }
@@ -419,8 +574,10 @@ fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
     GpuStats {
         model,
         frequency_mhz: frequency_mhz.filter(|value| value.is_finite() && *value >= 0.0),
-        min_frequency_mhz: min_frequency_mhz.filter(|value| value.is_finite() && *value >= 0.0),
-        max_frequency_mhz: max_frequency_mhz.filter(|value| value.is_finite() && *value >= 0.0),
+        min_frequency_mhz: min_frequency_mhz
+            .filter(|value| value.is_finite() && *value >= 0.0),
+        max_frequency_mhz: max_frequency_mhz
+            .filter(|value| value.is_finite() && *value >= 0.0),
         governor,
         load_percent: load_percent.map(|value| value.clamp(0.0, 100.0)),
     }
@@ -578,14 +735,16 @@ fn session_csv(input: &str) -> Result<String, serde_json::Error> {
         "monitorRamMb",
     ];
 
-    let mut output = String::new();
+    // ─── Optimizasyon #4: String büyümesini önceden tahmin etme ───────────────
+    // CSV çıktısının yaklaşık boyutunu önceden hesaplayıp String'e kapasitesini
+    // ayırıyoruz. Bu, String'in büyürken gereksiz yere defalarca yeniden
+    // tahsis (reallocation) yapmasını önler.
+    let estimated_capacity = rows.len() * headers.len() * 10 + headers.len() * 30;
+    let mut output = String::with_capacity(estimated_capacity);
     output.push_str(&headers.join(","));
     output.push('\n');
-    for row in rows {
-        let values: Vec<String> = headers
-            .iter()
-            .map(|header| csv_cell(row.get(*header)))
-            .collect();
+    for row in &rows {
+        let values: Vec<String> = headers.iter().map(|header| csv_cell(row.get(*header))).collect();
         output.push_str(&values.join(","));
         output.push('\n');
     }
@@ -629,6 +788,7 @@ presentToPresent histogram is as below:
         assert_eq!(result.max_frequency_mhz, Some(1000.0));
         assert_eq!(result.load_percent, Some(30.0));
     }
+
     #[test]
     fn frame_pacing_score_is_bounded() {
         let histogram = vec![(8.0, 80), (9.0, 15), (25.0, 5)];
@@ -663,4 +823,12 @@ presentToPresent histogram is as below:
         assert!(result.point_one_percent_low_fps.is_none());
     }
 
+    #[test]
+    fn regex_are_compiled_once() {
+        // İlk çağrı — derler
+        let _r1 = sf_average_regex();
+        // İkinci çağrı — önbellekten getirir (aynı pointer olmalı)
+        let _r2 = sf_average_regex();
+        assert!(std::ptr::eq(_r1 as *const _, _r2 as *const _));
+    }
 }
