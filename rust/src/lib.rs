@@ -5,12 +5,6 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::sync::OnceLock;
 
-// ─── Optimizasyon #1: Global statik Regex'ler ────────────────────────────────
-// Regex derleme işlemi artık uygulama ömrü boyunca yalnızca BİR KEZ yapılır.
-// Önceki kodda her parse_surfaceflinger() / parse_gpu() çağrısında
-// 4–6 adet Regex sıfırdan derleniyordu; bu CPU kullanımını gereksiz yere
-// artırıyordu (özellikle saniyede birden fazla çağrıldığında).
-
 static SF_AVERAGE_REGEX: OnceLock<Regex> = OnceLock::new();
 static SF_TOTAL_REGEX: OnceLock<Regex> = OnceLock::new();
 static SF_LAYER_REGEX: OnceLock<Regex> = OnceLock::new();
@@ -51,7 +45,6 @@ fn gpu_kv_regex() -> &'static Regex {
 fn gpu_number_regex() -> &'static Regex {
     GPU_NUMBER_REGEX.get_or_init(|| Regex::new(r"-?[0-9]+(?:\.[0-9]+)?").unwrap())
 }
-// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -163,7 +156,6 @@ fn parse_frame_stats(raw: &str, package_name: &str) -> FpsStats {
 }
 
 fn parse_surfaceflinger(raw: &str, package_name: &str) -> FpsStats {
-    // Statik Regex referansları — artık derleme maliyeti yok
     let average_regex = sf_average_regex();
     let total_regex = sf_total_regex();
     let layer_regex = sf_layer_regex();
@@ -307,12 +299,6 @@ fn parse_surfaceflinger(raw: &str, package_name: &str) -> FpsStats {
 }
 
 fn parse_gfxinfo(raw: &str) -> FpsStats {
-    // ─── Optimizasyon #2: Satır başına Vec<i64> allocation'dan kaçınma ────────
-    // Önceki kodda her satır için tüm 17+ değer parse edilip bir Vec'e
-    // toplanıyordu. Oysa sadece index 0, 1 ve 16 ilgili.
-    // Şimdi doğrudan pozisyona gidip yalnızca 3 değeri parse ediyoruz:
-    // bu hem bellek hem de CPU maliyetini önemli ölçüde azaltır.
-    // ─────────────────────────────────────────────────────────────────────────
     let mut durations_ms = Vec::<f64>::new();
 
     for line in raw.lines() {
@@ -321,23 +307,19 @@ fn parse_gfxinfo(raw: &str) -> FpsStats {
             continue;
         }
 
-        // Tüm satırı collect etmek yerine, sadece ihtiyacımız olan 3 alanı al
         let mut parts = trimmed.splitn(18, ',');
 
-        // Alan 0: flag (0 olmalı)
         let flag = match parts.next().and_then(|v| v.trim().parse::<i64>().ok()) {
             Some(0) => 0i64,
             _ => continue,
         };
-        let _ = flag; // flag == 0 garantilendi
+        let _ = flag;
 
-        // Alan 1: intended_vsync
         let intended_vsync = match parts.next().and_then(|v| v.trim().parse::<i64>().ok()) {
             Some(v) => v,
             None => continue,
         };
 
-        // Alanlar 2–15 atla (14 alan), 16. alan: frame_completed
         let mut field_index = 2usize;
         let frame_completed = loop {
             match parts.next() {
@@ -369,12 +351,6 @@ fn parse_gfxinfo(raw: &str) -> FpsStats {
         Some(durations_ms.iter().sum::<f64>() / durations_ms.len() as f64)
     };
 
-    // ─── Optimizasyon #3: gfxinfo için gerçek histogram ───────────────────────
-    // Önceki kodda her frame (f64, 1u64) çiftine dönüştürülüyordu; N frame için
-    // N eleman. Histogram yapısı (ms_bucket → count) kullanarak aynı bilgiyi
-    // çok daha az bellekle tutuyoruz. Frame süreleri zaten sıralı geldiğinden
-    // percentile hesaplamaları doğruluğunu korur.
-    // ─────────────────────────────────────────────────────────────────────────
     let histogram: Vec<(f64, u64)> = {
         let mut hist: Vec<(f64, u64)> = Vec::new();
         for &ms in &durations_ms {
@@ -508,7 +484,6 @@ fn tail_low_fps(histogram: &[(f64, u64)], total: u64, tail_fraction: f64) -> Opt
 }
 
 fn parse_gpu(raw: &str, fallback_model: &str) -> GpuStats {
-    // Statik Regex referansları kullan
     let key_value_regex = gpu_kv_regex();
     let number_regex = gpu_number_regex();
 
@@ -735,10 +710,6 @@ fn session_csv(input: &str) -> Result<String, serde_json::Error> {
         "monitorRamMb",
     ];
 
-    // ─── Optimizasyon #4: String büyümesini önceden tahmin etme ───────────────
-    // CSV çıktısının yaklaşık boyutunu önceden hesaplayıp String'e kapasitesini
-    // ayırıyoruz. Bu, String'in büyürken gereksiz yere defalarca yeniden
-    // tahsis (reallocation) yapmasını önler.
     let estimated_capacity = rows.len() * headers.len() * 10 + headers.len() * 30;
     let mut output = String::with_capacity(estimated_capacity);
     output.push_str(&headers.join(","));
@@ -825,9 +796,7 @@ presentToPresent histogram is as below:
 
     #[test]
     fn regex_are_compiled_once() {
-        // İlk çağrı — derler
         let _r1 = sf_average_regex();
-        // İkinci çağrı — önbellekten getirir (aynı pointer olmalı)
         let _r2 = sf_average_regex();
         assert!(std::ptr::eq(_r1 as *const _, _r2 as *const _));
     }
