@@ -222,13 +222,13 @@ class _Warning extends StatelessWidget {
   final String text;
   @override
   Widget build(BuildContext context) => Card(
-        color: const Color(0xFF3A1D24),
+        color: Theme.of(context).colorScheme.errorContainer,
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(children: [
-            const Icon(Icons.warning_amber_rounded, color: Color(0xFFFF9BAE)),
+            Icon(Icons.warning_amber_rounded, color: Theme.of(context).colorScheme.onErrorContainer),
             const SizedBox(width: 10),
-            Expanded(child: Text(text, style: const TextStyle(color: Color(0xFFFFC3CE)))),
+            Expanded(child: Text(text, style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer))),
           ]),
         ),
       );
@@ -255,7 +255,7 @@ class _Header extends StatelessWidget {
             ]),
           ),
           if (controller.recorder.isRecording)
-            const Chip(avatar: Icon(Icons.fiber_manual_record, size: 14, color: Color(0xFFFF6B7A)), label: Text('REC')),
+            Chip(avatar: Icon(Icons.fiber_manual_record, size: 14, color: Theme.of(context).colorScheme.error), label: const Text('REC')),
         ],
       );
 }
@@ -384,10 +384,10 @@ class _FrameHistogram extends StatelessWidget {
                   final height = (point[1] / maxCount).clamp(.03, 1.0).toDouble();
                   final ms = point[0];
                   final color = ms >= 50
-                      ? const Color(0xFFFF6B7A)
+                      ? Theme.of(context).colorScheme.error
                       : ms >= 25
-                          ? const Color(0xFFFFD65A)
-                          : const Color(0xFF39E7D0);
+                          ? Theme.of(context).colorScheme.tertiary
+                          : Theme.of(context).colorScheme.primary;
                   return Expanded(
                     child: Tooltip(
                       message: '${ms.toStringAsFixed(1)} ms · ${point[1].toStringAsFixed(0)} frames',
@@ -405,13 +405,13 @@ class _FrameHistogram extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 7),
-            const Row(
+            Row(
               children: [
-                Text('<25 ms', style: TextStyle(color: Color(0xFF39E7D0), fontSize: 10)),
-                Spacer(),
-                Text('25–50 ms', style: TextStyle(color: Color(0xFFFFD65A), fontSize: 10)),
-                Spacer(),
-                Text('≥50 ms', style: TextStyle(color: Color(0xFFFF6B7A), fontSize: 10)),
+                Text('<25 ms', style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 10)),
+                const Spacer(),
+                Text('25–50 ms', style: TextStyle(color: Theme.of(context).colorScheme.tertiary, fontSize: 10)),
+                const Spacer(),
+                Text('≥50 ms', style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 10)),
               ],
             ),
           ],

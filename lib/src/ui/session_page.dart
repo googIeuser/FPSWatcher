@@ -10,7 +10,7 @@ class SessionPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final samples = controller.recorder.samples;
     final summary = controller.recorder.summarize();
-    final events = _events(samples);
+    final events = _events(context, samples);
     String f(Object? value, [int digits = 1]) =>
         value is num ? value.toStringAsFixed(digits) : '—';
 
@@ -149,7 +149,7 @@ class SessionPage extends StatelessWidget {
     if (label != null && label.trim().isNotEmpty) await controller.addSessionMarker(label);
   }
 
-  List<_PerformanceEvent> _events(List<TelemetrySample> samples) {
+  List<_PerformanceEvent> _events(BuildContext context, List<TelemetrySample> samples) {
     final events = <_PerformanceEvent>[];
     bool thermalActive = false;
     bool fpsDropActive = false;
@@ -157,12 +157,12 @@ class SessionPage extends StatelessWidget {
     bool heavyStutterActive = false;
     for (final sample in samples) {
       if (sample.eventType == 'marker') {
-        events.add(_PerformanceEvent(sample.timestamp, 'Marker', sample.eventLabel ?? 'Manual marker', Icons.bookmark_outline, const Color(0xFF39E7D0)));
+        events.add(_PerformanceEvent(sample.timestamp, 'Marker', sample.eventLabel ?? 'Manual marker', Icons.bookmark_outline, Theme.of(context).colorScheme.primary));
         continue;
       }
       final thermal = sample.thermalThrottling == true;
       if (thermal && !thermalActive) {
-        events.add(_PerformanceEvent(sample.timestamp, 'Thermal throttling', 'CPU/GPU frequency headroom dropped under load.', Icons.device_thermostat_outlined, const Color(0xFFFF6B7A)));
+        events.add(_PerformanceEvent(sample.timestamp, 'Thermal throttling', 'CPU/GPU frequency headroom dropped under load.', Icons.device_thermostat_outlined, Theme.of(context).colorScheme.error));
       }
       thermalActive = thermal;
 
@@ -170,19 +170,19 @@ class SessionPage extends StatelessWidget {
       final fps = sample.fps;
       final fpsDrop = fps != null && refresh != null && fps < refresh * .65;
       if (fpsDrop && !fpsDropActive) {
-        events.add(_PerformanceEvent(sample.timestamp, 'FPS drop', '${fps.toStringAsFixed(1)} FPS on ${refresh.toStringAsFixed(0)} Hz display.', Icons.trending_down, const Color(0xFFFFD65A)));
+        events.add(_PerformanceEvent(sample.timestamp, 'FPS drop', '${fps.toStringAsFixed(1)} FPS on ${refresh.toStringAsFixed(0)} Hz display.', Icons.trending_down, Theme.of(context).colorScheme.tertiary));
       }
       fpsDropActive = fpsDrop;
 
       final network = (sample.networkPacketLossPercent ?? 0) >= 3 || (sample.networkJitterMs ?? 0) >= 20;
       if (network && !networkActive) {
-        events.add(_PerformanceEvent(sample.timestamp, 'Network spike', 'Ping ${sample.networkPingMs?.toStringAsFixed(1) ?? '—'} ms · jitter ${sample.networkJitterMs?.toStringAsFixed(1) ?? '—'} ms · loss ${sample.networkPacketLossPercent?.toStringAsFixed(1) ?? '—'}%.', Icons.network_ping_outlined, const Color(0xFF8D7CFF)));
+        events.add(_PerformanceEvent(sample.timestamp, 'Network spike', 'Ping ${sample.networkPingMs?.toStringAsFixed(1) ?? '—'} ms · jitter ${sample.networkJitterMs?.toStringAsFixed(1) ?? '—'} ms · loss ${sample.networkPacketLossPercent?.toStringAsFixed(1) ?? '—'}%.', Icons.network_ping_outlined, Theme.of(context).colorScheme.secondary));
       }
       networkActive = network;
 
       final heavyStutter = (sample.stutter100msCount ?? 0) > 0;
       if (heavyStutter && !heavyStutterActive) {
-        events.add(_PerformanceEvent(sample.timestamp, 'Heavy stutter', '${sample.stutter100msCount} frame(s) exceeded 100 ms in the rolling window.', Icons.bolt_outlined, const Color(0xFFFF9BAE)));
+        events.add(_PerformanceEvent(sample.timestamp, 'Heavy stutter', '${sample.stutter100msCount} frame(s) exceeded 100 ms in the rolling window.', Icons.bolt_outlined, Theme.of(context).colorScheme.errorContainer));
       }
       heavyStutterActive = heavyStutter;
     }

@@ -1,3 +1,4 @@
+import 'package:dynamic_color/dynamic_color.dart';
 import 'package:flutter/material.dart';
 import 'state/app_controller.dart';
 import 'ui/dashboard_page.dart';
@@ -10,43 +11,46 @@ class FpsWatcherApp extends StatelessWidget {
 
   final AppController controller;
 
+  // Fallback seed color if dynamic color is unavailable (Google Blue)
+  static const _defaultSeedColor = Color(0xFF4285F4);
+
+  ThemeData _createTheme(ColorScheme colorScheme) {
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: colorScheme,
+      fontFamily: 'sans-serif',
+      cardTheme: CardThemeData(
+        color: colorScheme.surfaceContainer,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        height: 76,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    const background = Color(0xFF071018);
-    const surface = Color(0xFF0E1A24);
-    const cyan = Color(0xFF39E7D0);
-    const violet = Color(0xFF8D7CFF);
+    return DynamicColorBuilder(
+      builder: (lightDynamic, darkDynamic) {
+        final lightScheme = lightDynamic ?? ColorScheme.fromSeed(seedColor: _defaultSeedColor, brightness: Brightness.light);
+        final darkScheme = darkDynamic ?? ColorScheme.fromSeed(seedColor: _defaultSeedColor, brightness: Brightness.dark);
 
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'FPSWatcher',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: background,
-        colorScheme: const ColorScheme.dark(
-          primary: cyan,
-          secondary: violet,
-          surface: surface,
-          error: Color(0xFFFF6B7A),
-        ),
-        useMaterial3: true,
-        fontFamily: 'sans-serif',
-        cardTheme: CardThemeData(
-          color: surface,
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-        ),
-        navigationBarTheme: const NavigationBarThemeData(
-          backgroundColor: Color(0xFF09141D),
-          indicatorColor: Color(0x2839E7D0),
-          height: 72,
-        ),
-      ),
-      home: AnimatedBuilder(
-        animation: controller,
-        builder: (context, _) => _HomeShell(controller: controller),
-      ),
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'FPSWatcher',
+          themeMode: ThemeMode.system,
+          theme: _createTheme(lightScheme),
+          darkTheme: _createTheme(darkScheme),
+          home: AnimatedBuilder(
+            animation: controller,
+            builder: (context, _) => _HomeShell(controller: controller),
+          ),
+        );
+      },
     );
   }
 }

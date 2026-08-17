@@ -22,7 +22,7 @@ class DiagnosticsPage extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           'Inspect backend health, telemetry sources, sampling latency and raw capability coverage.',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white54),
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: 18),
         _Section(
@@ -95,7 +95,7 @@ class DiagnosticsPage extends StatelessWidget {
             children: sample!.collectorWarnings
                 .map((warning) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 5),
-                      child: Text('• $warning', style: const TextStyle(color: Color(0xFFFFD65A))),
+                    child: Text('• $warning', style: TextStyle(color: Theme.of(context).colorScheme.tertiary)),
                     ))
                 .toList(growable: false),
           ),
@@ -103,7 +103,7 @@ class DiagnosticsPage extends StatelessWidget {
           const SizedBox(height: 14),
           _Section(
             title: 'LAST ERROR',
-            children: [Text(controller.lastError!, style: const TextStyle(color: Color(0xFFFF9BAE)))],
+            children: [Text(controller.lastError!, style: TextStyle(color: Theme.of(context).colorScheme.error))],
           ),
         ],
         const SizedBox(height: 14),
@@ -159,7 +159,7 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white54, letterSpacing: 1.4)),
+          Text(title, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant, letterSpacing: 1.4)),
           const SizedBox(height: 9),
           Card(
             child: Padding(
@@ -181,7 +181,7 @@ class _Row extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 5),
         child: Row(
           children: [
-            Expanded(child: Text(label, style: const TextStyle(color: Colors.white54))),
+            Expanded(child: Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
             const SizedBox(width: 12),
             Flexible(child: Text(value, textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
           ],
@@ -200,10 +200,10 @@ class _Capability extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 5),
         child: Row(
           children: [
-            Icon(available ? Icons.check_circle : Icons.remove_circle_outline, size: 18, color: available ? const Color(0xFF39E7D0) : Colors.white30),
+            Icon(available ? Icons.check_circle : Icons.remove_circle_outline, size: 18, color: available ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
             const SizedBox(width: 8),
             Expanded(child: Text(label)),
-            if (source != null) Flexible(child: Text(source!, textAlign: TextAlign.right, style: const TextStyle(color: Colors.white38, fontSize: 12))),
+            if (source != null) Flexible(child: Text(source!, textAlign: TextAlign.right, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12))),
           ],
         ),
       );
@@ -220,7 +220,7 @@ class _Code extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+            Text(label, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
             const SizedBox(height: 4),
             SelectableText(value, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
           ],

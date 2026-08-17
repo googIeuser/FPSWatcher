@@ -15,7 +15,7 @@ class SettingsPage extends StatelessWidget {
       children: [
         Text('Settings', style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w900, letterSpacing: -1)),
         const SizedBox(height: 6),
-        Text('Tune the privileged backend, dashboard sampling and every in-game overlay metric.', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white54)),
+        Text('Tune the privileged backend, dashboard sampling and every in-game overlay metric.', style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
         const SizedBox(height: 18),
         _Label('TELEMETRY BACKEND'),
         const SizedBox(height: 9),
@@ -35,7 +35,7 @@ class SettingsPage extends StatelessWidget {
               controller.accessMode == AccessMode.root
                   ? 'Root is the widest backend for sysfs, thermal zones, process scheduling, GPU devfreq and raw kernel telemetry.'
                   : 'Shizuku runs privileged shell telemetry without root. Availability still depends on Android and vendor restrictions.',
-              style: const TextStyle(color: Colors.white60, height: 1.35),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, height: 1.35),
             ),
           ),
         ),
@@ -55,7 +55,7 @@ class SettingsPage extends StatelessWidget {
                     )).toList(growable: false),
               ),
               const SizedBox(height: 8),
-              const Text('Fast counters are sampled frequently; expensive process, memory and network probes are internally rate-limited.', style: TextStyle(color: Colors.white54, fontSize: 12)),
+              Text('Fast counters are sampled frequently; expensive process, memory and network probes are internally rate-limited.', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
             ]),
           ),
         ),
@@ -200,7 +200,7 @@ class _Label extends StatelessWidget {
   const _Label(this.text);
   final String text;
   @override
-  Widget build(BuildContext context) => Text(text, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Colors.white54, letterSpacing: 1.4));
+  Widget build(BuildContext context) => Text(text, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant, letterSpacing: 1.4));
 }
 
 class _Switch extends StatelessWidget {
@@ -227,10 +227,10 @@ class _Permission extends StatelessWidget {
   Widget build(BuildContext context) => Card(
         margin: const EdgeInsets.only(bottom: 8),
         child: ListTile(
-          leading: Icon(icon, color: granted ? const Color(0xFF39E7D0) : Colors.white38),
+          leading: Icon(icon, color: granted ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
           title: Text(title),
           subtitle: Text(subtitle),
-          trailing: granted ? const Icon(Icons.check_circle, color: Color(0xFF39E7D0)) : TextButton(onPressed: action, child: const Text('Grant')),
+          trailing: granted ? Icon(Icons.check_circle, color: Theme.of(context).colorScheme.primary) : TextButton(onPressed: action, child: const Text('Grant')),
         ),
       );
 }
@@ -246,7 +246,7 @@ class _SliderRow extends StatelessWidget {
   final ValueChanged<double> onChanged;
   @override
   Widget build(BuildContext context) => Column(children: [
-        Row(children: [Expanded(child: Text(label)), Text(valueLabel, style: const TextStyle(color: Colors.white54))]),
+        Row(children: [Expanded(child: Text(label)), Text(valueLabel, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))]),
         Slider(value: value, min: min, max: max, divisions: divisions, onChanged: onChanged),
       ]);
 }
@@ -271,13 +271,13 @@ class _OverlayPreview extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('LIVE OVERLAY PREVIEW', style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 1)),
+          Text('LIVE OVERLAY PREVIEW', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11, letterSpacing: 1)),
           const SizedBox(height: 12),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Container(
               padding: EdgeInsets.all(preferences.paddingDp.toDouble()),
-              color: const Color(0xFF071018).withValues(alpha: preferences.opacity),
+              color: Colors.black.withValues(alpha: preferences.opacity),
               child: Text(text.isEmpty ? 'FPSWatcher' : text, style: TextStyle(fontSize: preferences.textSizeSp, color: preferences.textColor, fontFamily: 'monospace')),
             ),
           ),
